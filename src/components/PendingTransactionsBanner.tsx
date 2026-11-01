@@ -1,7 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
-  AlertTriangle,
-  Check,
   Edit2,
   Trash2,
   Zap,
@@ -24,11 +22,12 @@ export const PendingTransactionsBanner: React.FC<
 > = ({ pendingTransactions, onApprove, onApproveAll, onDiscard, onEdit }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
 
-  useEffect(() => {
-    if (currentIndex >= pendingTransactions.length) {
-      setCurrentIndex(Math.max(0, pendingTransactions.length - 1));
-    }
-  }, [pendingTransactions.length, currentIndex]);
+  // Clamp the index when the queue shrinks (adjusting state during render
+  // instead of in an effect; the guard ensures it settles after one pass).
+  const maxIndex = Math.max(0, pendingTransactions.length - 1);
+  if (currentIndex > maxIndex) {
+    setCurrentIndex(maxIndex);
+  }
 
   if (pendingTransactions.length === 0) return null;
 
@@ -65,7 +64,7 @@ export const PendingTransactionsBanner: React.FC<
           </div>
           {currentTx.explanation && (
             <p className="text-amber-700/80 mt-1 italic">
-              "{currentTx.explanation}"
+              &quot;{currentTx.explanation}&quot;
             </p>
           )}
         </div>

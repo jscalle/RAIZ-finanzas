@@ -46,7 +46,6 @@ export default function DashboardSection({
   startingSavings,
   totalContributions,
   formatCurrency,
-  capitalDisponible,
   totals,
   recentTransactions,
 }: DashboardSectionProps) {
@@ -82,9 +81,8 @@ export default function DashboardSection({
       e.topicId !== 'topic_ahorros' &&
       !String(e.id || '').startsWith('exp_from_contrib_')
   );
-  const historySource = (allExpenses && allExpenses.length > 0
-    ? allExpenses
-    : expenses
+  const historySource = (
+    allExpenses && allExpenses.length > 0 ? allExpenses : expenses
   ).filter(
     (e) =>
       e.confirmed &&
@@ -160,7 +158,7 @@ export default function DashboardSection({
     (e) =>
       e.paymentMethod === 'CREDITO' &&
       e.topicId !== 'topic_1787580821277' &&
-      !(e as any).creditPaid
+      !(e as Expense & { creditPaid?: boolean }).creditPaid
   );
   const unpaidCreditTotal = unpaidCreditPurchases.reduce(
     (sum, e) => sum + e.amount,
@@ -228,8 +226,8 @@ export default function DashboardSection({
               {formatCurrency(disponibleRealParaGastar)}
             </p>
             <p className="mt-2 text-xs text-muted-foreground leading-relaxed max-w-xl">
-              Cálculo: Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes (
-              {formatCurrency(totals.ahorro)}) − Topes planeados (
+              Cálculo: Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes
+              ({formatCurrency(totals.ahorro)}) − Topes planeados (
               {formatCurrency(totalBudgetLimit)}) − Excesos fuera de tope (
               {formatCurrency(overBudgetTotal)})
               {netPriorTcDebtPaidThisMonth > 0
@@ -348,7 +346,8 @@ export default function DashboardSection({
               Suma de las compras registradas en la app con método{' '}
               <strong>CRÉDITO</strong> que aún no se han cruzado con un abono en{' '}
               <em>Tarjetas/creditos</em>. (Si un gasto de TC se registró como
-              Débito, cámbialo a Crédito en la pestaña Gastos para sumarlo aquí).
+              Débito, cámbialo a Crédito en la pestaña Gastos para sumarlo
+              aquí).
             </p>
             {unpaidCreditPurchases.length > 0 && (
               <ul className="pt-2 space-y-1 text-xs border-t border-border/60">

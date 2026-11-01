@@ -167,8 +167,10 @@ export default function IncomesSection({
       setDescription('');
       setAmount('');
       setIncomeError('');
-    } catch (err: any) {
-      setIncomeError(err.message || 'Error al guardar el ingreso');
+    } catch (err) {
+      setIncomeError(
+        (err instanceof Error && err.message) || 'Error al guardar el ingreso'
+      );
     }
   };
 
@@ -176,8 +178,10 @@ export default function IncomesSection({
     try {
       onDeleteIncome(id);
       setGlobalError('');
-    } catch (err: any) {
-      setGlobalError(err.message || 'Error al eliminar el ingreso');
+    } catch (err) {
+      setGlobalError(
+        (err instanceof Error && err.message) || 'Error al eliminar el ingreso'
+      );
     }
   };
 
@@ -185,8 +189,10 @@ export default function IncomesSection({
     try {
       onToggleConfirmIncome(id);
       setGlobalError('');
-    } catch (err: any) {
-      setGlobalError(err.message || 'Error al actualizar el estado');
+    } catch (err) {
+      setGlobalError(
+        (err instanceof Error && err.message) || 'Error al actualizar el estado'
+      );
     }
   };
 
@@ -252,8 +258,10 @@ export default function IncomesSection({
       setWthDescription('');
       setWthAmount('');
       setWthError('');
-    } catch (err: any) {
-      setWthError(err.message || 'Error al guardar el retiro');
+    } catch (err) {
+      setWthError(
+        (err instanceof Error && err.message) || 'Error al guardar el retiro'
+      );
     }
   };
 
@@ -261,8 +269,10 @@ export default function IncomesSection({
     try {
       onDeleteWithdrawal(id);
       setGlobalError('');
-    } catch (err: any) {
-      setGlobalError(err.message || 'Error al eliminar el retiro');
+    } catch (err) {
+      setGlobalError(
+        (err instanceof Error && err.message) || 'Error al eliminar el retiro'
+      );
     }
   };
 

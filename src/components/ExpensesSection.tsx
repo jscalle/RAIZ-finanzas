@@ -153,8 +153,10 @@ export default function ExpensesSection({
       setConfirmed(true);
       setPaymentMethod('DEBITO');
       setError('');
-    } catch (err: any) {
-      setError(err.message || 'Error al guardar el gasto');
+    } catch (err) {
+      setError(
+        (err instanceof Error && err.message) || 'Error al guardar el gasto'
+      );
     }
   };
 
@@ -162,8 +164,10 @@ export default function ExpensesSection({
     try {
       onDeleteExpense(id);
       setError('');
-    } catch (err: any) {
-      setError(err.message || 'Error al eliminar el gasto');
+    } catch (err) {
+      setError(
+        (err instanceof Error && err.message) || 'Error al eliminar el gasto'
+      );
     }
   };
 
@@ -171,8 +175,10 @@ export default function ExpensesSection({
     try {
       onToggleConfirmExpense(id);
       setError('');
-    } catch (err: any) {
-      setError(err.message || 'Error al actualizar el estado');
+    } catch (err) {
+      setError(
+        (err instanceof Error && err.message) || 'Error al actualizar el estado'
+      );
     }
   };
 

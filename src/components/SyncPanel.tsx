@@ -15,7 +15,6 @@ import {
   ShieldCheck,
   User,
   UserPlus,
-  Users,
   X,
 } from 'lucide-react';
 import { Space, AccessRequest, normalizeSpaceId } from '../lib/firebase';
@@ -201,7 +200,9 @@ export default function SyncPanel({
       {isAuthLoading ? (
         <div className="flex flex-col items-center justify-center p-12 bg-muted/10 rounded-xl border border-border/40">
           <Loader2 className="h-8 w-8 animate-spin text-cyan-400 mb-4" />
-          <p className="text-sm text-muted-foreground font-medium">Verificando sesión...</p>
+          <p className="text-sm text-muted-foreground font-medium">
+            Verificando sesión...
+          </p>
         </div>
       ) : !user ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">

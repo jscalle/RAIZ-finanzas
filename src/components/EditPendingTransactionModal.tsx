@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Check } from 'lucide-react';
 import { PendingTransaction, Topic } from '../types';
@@ -37,7 +37,20 @@ export default function EditPendingTransactionModal({
   const [method, setMethod] = useState('DIGITAL');
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  // Re-initialize the form whenever isOpen, pendingTx or topics change, using
+  // the "adjust state when a prop changes" pattern instead of an effect.
+  const [syncedFrom, setSyncedFrom] = useState<{
+    isOpen: boolean;
+    pendingTx: PendingTransaction | null;
+    topics: Topic[];
+  } | null>(null);
+  if (
+    syncedFrom === null ||
+    syncedFrom.isOpen !== isOpen ||
+    syncedFrom.pendingTx !== pendingTx ||
+    syncedFrom.topics !== topics
+  ) {
+    setSyncedFrom({ isOpen, pendingTx, topics });
     if (isOpen && pendingTx) {
       setType(pendingTx.type === 'INCOME' ? 'INCOME' : 'EXPENSE');
       setDescription(pendingTx.description || '');
@@ -63,7 +76,7 @@ export default function EditPendingTransactionModal({
       setMethod('DIGITAL');
       setError('');
     }
-  }, [isOpen, pendingTx, topics]);
+  }
 
   if (!isOpen || !pendingTx) return null;
 

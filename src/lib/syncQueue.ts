@@ -4,7 +4,7 @@ export interface SyncQueueItem {
   id: string;
   subcol: string;
   action: 'save' | 'delete';
-  data?: any;
+  data?: object;
   timestamp: number;
 }
 
@@ -13,7 +13,7 @@ export function getSyncQueue(spaceId: string): SyncQueueItem[] {
   if (queueStr) {
     try {
       return JSON.parse(queueStr);
-    } catch (e) {
+    } catch {
       return [];
     }
   }
@@ -66,7 +66,14 @@ export async function flushSyncQueue(spaceId: string): Promise<number> {
   for (const item of sortedQueue) {
     try {
       if (item.action === 'save') {
-        await saveSpaceDocument(spaceId, item.subcol, item.id, item.data);
+        // Save entries are always enqueued with data; a missing payload is
+        // rejected and logged inside saveSpaceDocument, as before.
+        await saveSpaceDocument(
+          spaceId,
+          item.subcol,
+          item.id,
+          item.data as object
+        );
       } else if (item.action === 'delete') {
         await deleteSpaceDocument(spaceId, item.subcol, item.id);
       }
