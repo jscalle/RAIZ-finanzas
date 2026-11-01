@@ -232,7 +232,7 @@ describe('App integration', () => {
     seedProfile({
       activeMonth: '2026-08',
       startingSavings: 0,
-      topics: [expenseTopic],
+      topics: [{ ...expenseTopic, monthlyLimit: 300 }],
       incomes: [
         {
           id: 'inc_a',
@@ -264,7 +264,8 @@ describe('App integration', () => {
     render(<App />);
 
     // Monthly income flow ($1.000) and expense flow ($400) appear in the hero
-    // and flow cards; capitalDisponible = 1000 - 400 = 600 as the balance.
+    // and flow cards. The headline "available to spend" balance is
+    // income - savings - planned limit - overspend = 1000 - 0 - 300 - 100 = 600.
     expect(screen.getAllByText('$1.000').length).toBeGreaterThan(0);
     expect(screen.getAllByText('$400').length).toBeGreaterThan(0);
     expect(screen.getAllByText('$600').length).toBeGreaterThan(0);

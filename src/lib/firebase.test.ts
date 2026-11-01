@@ -59,6 +59,7 @@ vi.mock('firebase/app', () => ({
 vi.mock('firebase/auth', () => ({
   initializeAuth: (...args: unknown[]) => h.initializeAuth(...args),
   browserLocalPersistence: {},
+  browserPopupRedirectResolver: {},
   signInWithPopup: vi.fn(),
   GoogleAuthProvider: class {
     static credential = vi.fn();
@@ -70,6 +71,8 @@ vi.mock('firebase/auth', () => ({
   signInWithEmailAndPassword: vi.fn(),
   createUserWithEmailAndPassword: vi.fn(),
   signInWithCredential: vi.fn(),
+  signInWithRedirect: vi.fn(),
+  getRedirectResult: vi.fn(),
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -86,6 +89,7 @@ vi.mock('firebase/firestore', () => ({
   where: vi.fn(),
   getDocs: vi.fn(),
   arrayUnion: vi.fn(),
+  arrayRemove: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({

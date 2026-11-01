@@ -36,6 +36,6 @@ describe('SavingsSection', () => {
       />
     );
 
-    expect(screen.getByText('Metas de Ahorro')).toBeInTheDocument();
+    expect(screen.getByText('Plan de Ahorros y Metas')).toBeInTheDocument();
   });
 });

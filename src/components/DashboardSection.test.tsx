@@ -57,10 +57,20 @@ function buildProps(
 }
 
 describe('DashboardSection', () => {
-  it('should render the capital balance headline using the provided formatter', () => {
-    render(<DashboardSection {...buildProps({ capitalDisponible: 5000 })} />);
-    expect(screen.getByText('Disponible (Capital Total)')).toBeInTheDocument();
-    expect(screen.getByText('$5,000')).toBeInTheDocument();
+  it('should render the available-to-spend headline using the provided formatter', () => {
+    // Headline = ingreso - ahorro - planned category limits - overspend:
+    // 4000 - 500 - 100 (Comida limit) - 0 = 3400.
+    render(
+      <DashboardSection
+        {...buildProps({ totals: { ingreso: 4000, gasto: 1000, ahorro: 500 } })}
+      />
+    );
+    expect(
+      screen.getByText(
+        'Disponible Real para Gastar (Libre después de Topes y Ahorro)'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText('$3,400')).toBeInTheDocument();
   });
 
   it('should compute the savings rate as ahorro over ingreso', () => {

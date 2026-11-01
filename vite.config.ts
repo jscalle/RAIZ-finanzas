@@ -59,6 +59,51 @@ export default defineConfig(() => {
     },
     test: {
       environment: 'jsdom',
+      // Node >= 25 exposes a built-in Web Storage `localStorage` global. It
+      // shadows jsdom's implementation (vitest does not override globals that
+      // already exist) and is `undefined` without --localstorage-file, which
+      // breaks every test touching storage. Disable it in the test workers so
+      // jsdom's Storage is used. Guarded so older Node versions without the
+      // flag still start.
+      execArgv: process.allowedNodeEnvironmentFlags.has(
+        '--no-experimental-webstorage',
+      )
+        ? ['--no-experimental-webstorage']
+        : [],
+      // Vitest resolves dependencies with the `node` export condition, even in
+      // jsdom. For `@firebase/auth` that selects its Node build, where
+      // `browserPopupRedirectResolver` is an Error placeholder, so the
+      // `initializeAuth(...)` call in src/lib/firebase.ts throws "INTERNAL
+      // ASSERTION FAILED: Expected a class definition" at import time. Point
+      // `@firebase/auth` at the browser build the app actually ships, and
+      // inline every Firebase package so Vite applies this alias and all of
+      // them share one @firebase/app component registry.
+      alias: [
+        {
+          find: /^@firebase\/auth$/,
+          replacement: (() => {
+            const { createRequire } = process.getBuiltinModule('node:module');
+            const requireFromFirebase = createRequire(
+              createRequire(import.meta.url).resolve('firebase/package.json'),
+            );
+            const authPkgPath = requireFromFirebase.resolve(
+              '@firebase/auth/package.json',
+            );
+            const authPkg = requireFromFirebase(authPkgPath) as {
+              exports: { '.': { browser: { import: string } } };
+            };
+            return path.join(
+              path.dirname(authPkgPath),
+              authPkg.exports['.'].browser.import,
+            );
+          })(),
+        },
+      ],
+      server: {
+        deps: {
+          inline: [/[\\/]@?firebase[\\/]/],
+        },
+      },
       setupFiles: ['./src/setupTests.ts'],
       globals: true,
       css: false,

@@ -43,8 +43,9 @@ describe('ExpensesSection', () => {
       />
     );
 
-    expect(screen.getByText('Presupuesto de Gastos')).toBeInTheDocument();
-    expect(screen.getByText('Supermercado')).toBeInTheDocument();
+    expect(screen.getByText('Control de Gastos')).toBeInTheDocument();
+    // Rendered once in the desktop table and once in the mobile list.
+    expect(screen.getAllByText('Supermercado')).toHaveLength(2);
   });
 
   it('calls onDeleteExpense when delete button is clicked', () => {

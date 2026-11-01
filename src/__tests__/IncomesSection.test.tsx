@@ -46,8 +46,9 @@ describe('IncomesSection', () => {
       />
     );
 
-    expect(screen.getByText('Presupuesto de Ingresos')).toBeInTheDocument();
-    expect(screen.getByText('Nómina Mensual')).toBeInTheDocument();
+    expect(screen.getByText('Gestión de Ingresos')).toBeInTheDocument();
+    // Rendered once in the desktop table and once in the mobile list.
+    expect(screen.getAllByText('Nómina Mensual')).toHaveLength(2);
   });
 
   it('calls onDeleteIncome when delete button is clicked', () => {
