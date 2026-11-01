@@ -117,12 +117,16 @@ const H = vi.hoisted(() => {
 vi.mock('./lib/firebase', () => ({
   // initAuth fires its success callback synchronously when autoSignIn is on,
   // pushing the app straight into the authenticated state (user + syncEnabled).
+  // Otherwise it reports "no user" through the failure callback, like the real
+  // onAuthStateChanged(null) path, which ends App's auth-loading state.
   initAuth: (
     onSuccess?: (user: unknown, token: string | null) => void,
-    _onFailure?: () => void
+    onFailure?: () => void
   ) => {
-    if (H.control.autoSignIn && onSuccess) {
-      onSuccess(H.fakeUser, H.control.token);
+    if (H.control.autoSignIn) {
+      onSuccess?.(H.fakeUser, H.control.token);
+    } else {
+      onFailure?.();
     }
     return () => {};
   },
@@ -186,9 +190,27 @@ vi.mock('./lib/firebase', () => ({
   },
   rejectAccessRequest: async () => {},
   regenerateSpaceCode: async () => 'ESP-NEW000',
+  removeSpaceMember: async () => {},
+  // SpaceMembersList resolves member profiles for the active space.
+  fetchSpaceMemberProfiles: async () => ({
+    [H.fakeUser.uid]: {
+      email: H.fakeUser.email,
+      displayName: H.fakeUser.displayName,
+    },
+  }),
   readStoredToken: () => null,
   writeStoredToken: () => {},
   clearStoredToken: () => {},
+  // Opaque handle: App only passes it to the mocked firebase/firestore below.
+  db: { __mockDb: true },
+}));
+
+// App subscribes to the active space document directly through
+// firebase/firestore (doc + onSnapshot on the mocked `db`). Keep that listener
+// inert so spaceInfo comes solely from the getOrCreateSpace fixture above.
+vi.mock('firebase/firestore', () => ({
+  doc: (_db: unknown, ...segments: string[]) => ({ path: segments.join('/') }),
+  onSnapshot: () => () => {},
 }));
 
 vi.mock('./lib/gmail', () => ({
@@ -368,48 +390,31 @@ describe('App signed-in + cloud sync', () => {
     expect(await screen.findByText('tester@demo.com')).toBeInTheDocument();
   });
 
-  it('connects Gmail via googleGmailSignIn when no token is present', async () => {
-    H.control.token = null; // signed in but Gmail not yet connected
+  it('does not offer Gmail Sync in the sidebar nor in the mobile more menu', async () => {
     render(<App />);
 
-    // Open the Gmail Sync tab and switch to the automatic Gmail mode.
-    fireEvent.click(screen.getByRole('button', { name: /Gmail Sync/i }));
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: /Conectar con Gmail \(Automático\)/i,
-      })
-    );
+    // Desktop sidebar: the Gmail Sync entry was removed from navigation.
+    expect(
+      screen.queryByRole('button', { name: /Gmail Sync/i })
+    ).not.toBeInTheDocument();
 
-    // Without a token the connect button is shown; clicking it runs the mocked
-    // googleGmailSignIn and stores the returned access token, revealing the
-    // connected state.
-    fireEvent.click(
-      await screen.findByRole('button', { name: /Conectar con Google/i })
-    );
-
-    await waitFor(() => expect(H.spy.googleGmailSignIn).toBe(1));
-    expect(await screen.findByText('Gmail Conectado')).toBeInTheDocument();
+    // Mobile "Más" sheet: opening it lists settings and actions, never Gmail.
+    fireEvent.click(screen.getByRole('button', { name: 'Más' }));
+    expect(await screen.findByText('Acciones')).toBeInTheDocument();
+    expect(screen.queryByText(/Gmail Sync/i)).not.toBeInTheDocument();
   });
 
-  it('fetches bank emails through fetchRecentBankEmails and renders them', async () => {
-    render(<App />); // signed in with a token by default
+  it('groups the navigation into money views and settings sections', async () => {
+    render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: /Gmail Sync/i }));
-    fireEvent.click(
-      await screen.findByRole('button', {
-        name: /Conectar con Gmail \(Automático\)/i,
-      })
-    );
+    // Sidebar section headings.
+    expect(screen.getByText('Mi dinero')).toBeInTheDocument();
+    expect(screen.getByText('Ajustes')).toBeInTheDocument();
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: /Buscar Alertas Bancarias/i })
-    );
-
-    // The mocked fetchRecentBankEmails fixture reaches the message list.
-    expect(
-      await screen.findByText('Bancolombia: compra aprobada')
-    ).toBeInTheDocument();
-    expect(H.spy.fetchEmails).toBeGreaterThan(0);
+    // The mobile sheet mirrors the settings grouping and adds an actions group.
+    fireEvent.click(screen.getByRole('button', { name: 'Más' }));
+    expect(await screen.findByText('Acciones')).toBeInTheDocument();
+    expect(screen.getAllByText('Ajustes')).toHaveLength(2);
   });
 
   it('requests access to another space and shows the pending-request state', async () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   BellRing,
@@ -10,11 +10,9 @@ import {
   CloudOff,
   LayoutDashboard,
   Loader2,
-  Mail,
   Menu,
   RefreshCw,
   Shapes,
-  Sprout,
   Target,
   TrendingDown,
   TrendingUp,
@@ -48,9 +46,17 @@ export const getColombiaDateISO = (): string => {
   }
 };
 
+// Pending transactions created by the Telegram bot carry extra Firestore fields
+// (see server.ts draft documents) that the shared PendingTransaction type omits.
+type PendingTransactionDraft = PendingTransaction & {
+  topicId?: string;
+  tgChatId?: number;
+  tgMessageId?: number | null;
+};
+
 export const normalizeDateToISO = (dateStr: string): string => {
   if (!dateStr) return getColombiaDateISO();
-  const regex = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/;
+  const regex = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/;
   const match = dateStr.match(regex);
   if (match) {
     const [, dd, mm, yyyy] = match;
@@ -97,7 +103,6 @@ import { calculateFinancials } from './lib/mathEngine';
 // Cloud and Gmail Imports
 import {
   googleSignIn,
-  googleGmailSignIn,
   emailSignIn,
   emailSignUp,
   logout as firebaseLogout,
@@ -117,14 +122,12 @@ import {
   rejectAccessRequest,
   regenerateSpaceCode,
   readStoredToken,
-  writeStoredToken,
   clearStoredToken,
   removeSpaceMember,
   db,
 } from './lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 const SyncPanel = lazy(() => import('./components/SyncPanel'));
-const GmailSyncTab = lazy(() => import('./components/GmailSyncTab'));
 import { User } from 'firebase/auth';
 import { useProfileStorage } from './hooks/useProfileStorage';
 import { useGmailSync } from './hooks/useGmailSync';
@@ -214,7 +217,6 @@ export default function App() {
     | 'expenses'
     | 'savings'
     | 'topics'
-    | 'gmail_sync'
     | 'sync_settings'
   >('dashboard');
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false);
@@ -364,38 +366,43 @@ export default function App() {
 
   // Authoritative Cloud Merge: when connected to a Space, Firestore is the source of truth;
   // only preserve local items that are actively pending in the offline syncQueue.
-  const mergeRecords = <T extends { id: string }>(
-    serverItems: T[],
-    localItems: T[],
-    subcol?: string
-  ): T[] => {
-    const cleanServer = (serverItems || []).filter(
-      (s) => !DEMO_SEED_IDS.has(s.id)
-    );
-    if (!currentSpaceId || !subcol) {
-      return cleanServer.length > 0 ? cleanServer : localItems;
-    }
-    const queue = getSyncQueue(currentSpaceId).filter(
-      (q) => q.subcol === subcol
-    );
-    const pendingSaveIds = new Set(
-      queue.filter((q) => q.action === 'save').map((q) => q.id)
-    );
-    const pendingDeleteIds = new Set(
-      queue.filter((q) => q.action === 'delete').map((q) => q.id)
-    );
-    const serverFiltered = cleanServer.filter(
-      (s) => !pendingDeleteIds.has(s.id)
-    );
-    const serverIds = new Set(serverFiltered.map((s) => s.id));
-    const queuedLocalOnly = localItems.filter(
-      (l) =>
-        !DEMO_SEED_IDS.has(l.id) &&
-        pendingSaveIds.has(l.id) &&
-        !serverIds.has(l.id)
-    );
-    return [...serverFiltered, ...queuedLocalOnly];
-  };
+  // Memoized on currentSpaceId (its only reactive input) so the sync effect can
+  // list it as a dependency without changing when that effect re-subscribes.
+  const mergeRecords = useCallback(
+    <T extends { id: string }>(
+      serverItems: T[],
+      localItems: T[],
+      subcol?: string
+    ): T[] => {
+      const cleanServer = (serverItems || []).filter(
+        (s) => !DEMO_SEED_IDS.has(s.id)
+      );
+      if (!currentSpaceId || !subcol) {
+        return cleanServer.length > 0 ? cleanServer : localItems;
+      }
+      const queue = getSyncQueue(currentSpaceId).filter(
+        (q) => q.subcol === subcol
+      );
+      const pendingSaveIds = new Set(
+        queue.filter((q) => q.action === 'save').map((q) => q.id)
+      );
+      const pendingDeleteIds = new Set(
+        queue.filter((q) => q.action === 'delete').map((q) => q.id)
+      );
+      const serverFiltered = cleanServer.filter(
+        (s) => !pendingDeleteIds.has(s.id)
+      );
+      const serverIds = new Set(serverFiltered.map((s) => s.id));
+      const queuedLocalOnly = localItems.filter(
+        (l) =>
+          !DEMO_SEED_IDS.has(l.id) &&
+          pendingSaveIds.has(l.id) &&
+          !serverIds.has(l.id)
+      );
+      return [...serverFiltered, ...queuedLocalOnly];
+    },
+    [currentSpaceId]
+  );
 
   // 2. Sync state data with Active Cloud Space in real-time
   useEffect(() => {
@@ -495,6 +502,7 @@ export default function App() {
     syncEnabled,
     currentSpaceId,
     user,
+    mergeRecords,
     setTopics,
     setIncomes,
     setExpenses,
@@ -764,89 +772,6 @@ export default function App() {
         type: 'error',
       });
       throw err;
-    }
-  };
-
-  const handleGmailLogin = async () => {
-    try {
-      const res = await googleGmailSignIn();
-      if (res) {
-        setUser(res.user);
-        if (res.accessToken) {
-          setGToken(res.accessToken);
-          writeStoredToken(res.accessToken);
-        }
-        setSyncEnabled(true);
-        setToast({ message: '¡Conexión a Gmail exitosa!', type: 'success' });
-        if (!currentSpaceId) {
-          const defaultId = `espacio_${res.user.email?.split('@')[0].replace(/\W/g, '')}`;
-          await handleJoinSpace(
-            defaultId,
-            `Presupuesto de ${res.user.email?.split('@')[0]}`,
-            res.user
-          );
-        }
-      }
-    } catch (err) {
-      const error = err as Error & { code?: string };
-      const errMsg = String(error?.message || error?.code || err);
-      if (
-        error?.code === 'auth/popup-closed-by-user' ||
-        errMsg.includes('popup-closed-by-user') ||
-        errMsg.includes('closed-by-user')
-      ) {
-        setToast({
-          message:
-            'Conexión cancelada (cerraste la ventana emergente de Google).',
-          type: 'info',
-        });
-      } else if (
-        error?.code === 'auth/cancelled-popup-request' ||
-        errMsg.includes('cancelled-popup-request')
-      ) {
-        setToast({
-          message: 'Se canceló la solicitud anterior de autenticación.',
-          type: 'info',
-        });
-      } else if (
-        error?.code === 'auth/unauthorized-domain' ||
-        errMsg.includes('unauthorized-domain')
-      ) {
-        setToast({
-          message:
-            "Dominio no autorizado en Firebase. Agrega '" +
-            window.location.hostname +
-            "' en Firebase Console -> Authentication -> Settings -> Authorized domains.",
-          type: 'error',
-        });
-      } else if (
-        error?.code === 'auth/configuration-not-found' ||
-        errMsg.includes('configuration-not-found') ||
-        error?.code === 'auth/operation-not-allowed' ||
-        errMsg.includes('operation-not-allowed')
-      ) {
-        setToast({
-          message:
-            'El servicio de autenticación de Google no está habilitado en la consola de tu proyecto Firebase. Por favor actívalo en Firebase Console -> Authentication -> Sign-in method.',
-          type: 'error',
-        });
-      } else if (
-        error?.code === 'auth/access-denied' ||
-        errMsg.includes('access_denied') ||
-        errMsg.includes('403') ||
-        errMsg.includes('verification')
-      ) {
-        setToast({
-          message:
-            "Error de Acceso (403): Gmail es un permiso sensible. El propietario debe añadir tu correo como 'Test User' en Google Cloud Console para poder sincronizar correos.",
-          type: 'error',
-        });
-      } else {
-        setToast({
-          message: `Error al conectar Gmail: ${error.message || err}`,
-          type: 'error',
-        });
-      }
     }
   };
 
@@ -1511,7 +1436,7 @@ export default function App() {
             e.confirmed &&
             e.paymentMethod === 'CREDITO' &&
             e.topicId !== 'topic_1787580821277' &&
-            !(e as any).creditPaid
+            !(e as Expense & { creditPaid?: boolean }).creditPaid
         )
         .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
@@ -1584,20 +1509,20 @@ export default function App() {
     tx: PendingTransaction,
     action: 'APPROVED' | 'DISCARDED'
   ) => {
-    const anyTx = tx as any;
+    const draftTx: PendingTransactionDraft = tx;
     const apiBase = (
       (import.meta as unknown as { env: Record<string, string> }).env
         ?.VITE_API_BASE_URL || ''
     ).replace(/\/$/, '');
-    if (anyTx.tgChatId && anyTx.tgMessageId) {
+    if (draftTx.tgChatId && draftTx.tgMessageId) {
       fetch(`${apiBase}/api/telegram/sync-draft`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           spaceId: currentSpaceId,
           draftId: tx.id,
-          chatId: anyTx.tgChatId,
-          messageId: anyTx.tgMessageId,
+          chatId: draftTx.tgChatId,
+          messageId: draftTx.tgMessageId,
           action,
           description: tx.description,
           amount: tx.amount,
@@ -1609,22 +1534,21 @@ export default function App() {
 
   // Handlers for Pending Transactions (Webhooks/SMS/Telegram)
   const handleApprovePendingTransaction = (tx: PendingTransaction) => {
-    const anyTx = tx as any;
+    const draftTx: PendingTransactionDraft = tx;
     const matchedTopic =
-      (anyTx.topicId && topics.find((t) => t.id === anyTx.topicId)) ||
+      (draftTx.topicId && topics.find((t) => t.id === draftTx.topicId)) ||
       topics.find((t) => t.name.toLowerCase() === tx.category.toLowerCase()) ||
       topics[0];
     const topicId = matchedTopic ? matchedTopic.id : 'default';
     const normalizedDate = normalizeDateToISO(tx.date);
-    const resolvedExpenseMethod: 'DEBITO' | 'CREDITO' | 'EFECTIVO' = [
-      'DEBITO',
-      'CREDITO',
-      'EFECTIVO',
-    ].includes(anyTx.paymentMethod)
-      ? anyTx.paymentMethod
-      : 'DEBITO';
+    const resolvedExpenseMethod: 'DEBITO' | 'CREDITO' | 'EFECTIVO' =
+      draftTx.paymentMethod === 'DEBITO' ||
+      draftTx.paymentMethod === 'CREDITO' ||
+      draftTx.paymentMethod === 'EFECTIVO'
+        ? draftTx.paymentMethod
+        : 'DEBITO';
     const resolvedIncomeMethod: 'EFECTIVO' | 'DIGITAL' =
-      anyTx.paymentMethod === 'EFECTIVO' ? 'EFECTIVO' : 'DIGITAL';
+      draftTx.paymentMethod === 'EFECTIVO' ? 'EFECTIVO' : 'DIGITAL';
 
     if (tx.type === 'INCOME') {
       handleAddIncome(
@@ -1688,9 +1612,9 @@ export default function App() {
   const handleApproveAllPendingTransactions = (txs: PendingTransaction[]) => {
     let lastMonth = '';
     txs.forEach((tx) => {
-      const anyTx = tx as any;
+      const draftTx: PendingTransactionDraft = tx;
       const matchedTopic =
-        (anyTx.topicId && topics.find((t) => t.id === anyTx.topicId)) ||
+        (draftTx.topicId && topics.find((t) => t.id === draftTx.topicId)) ||
         topics.find(
           (t) => t.name.toLowerCase() === tx.category.toLowerCase()
         ) ||
@@ -1698,15 +1622,14 @@ export default function App() {
       const topicId = matchedTopic ? matchedTopic.id : 'default';
       const normalizedDate = normalizeDateToISO(tx.date);
       lastMonth = normalizedDate.slice(0, 7);
-      const resolvedExpenseMethod: 'DEBITO' | 'CREDITO' | 'EFECTIVO' = [
-        'DEBITO',
-        'CREDITO',
-        'EFECTIVO',
-      ].includes(anyTx.paymentMethod)
-        ? anyTx.paymentMethod
-        : 'DEBITO';
+      const resolvedExpenseMethod: 'DEBITO' | 'CREDITO' | 'EFECTIVO' =
+        draftTx.paymentMethod === 'DEBITO' ||
+        draftTx.paymentMethod === 'CREDITO' ||
+        draftTx.paymentMethod === 'EFECTIVO'
+          ? draftTx.paymentMethod
+          : 'DEBITO';
       const resolvedIncomeMethod: 'EFECTIVO' | 'DIGITAL' =
-        anyTx.paymentMethod === 'EFECTIVO' ? 'EFECTIVO' : 'DIGITAL';
+        draftTx.paymentMethod === 'EFECTIVO' ? 'EFECTIVO' : 'DIGITAL';
 
       if (tx.type === 'INCOME') {
         handleAddIncome(
@@ -1785,7 +1708,7 @@ export default function App() {
         editedData.topicId,
         editedData.date,
         true,
-        editedData.method as any,
+        editedData.method as NonNullable<Income['method']>,
         'SMS_PUSH',
         'VERIFIED'
       );
@@ -1797,7 +1720,7 @@ export default function App() {
         editedData.date,
         'INGRESOS',
         true,
-        editedData.method as any,
+        editedData.method as NonNullable<Expense['paymentMethod']>,
         'SMS_PUSH',
         'VERIFIED'
       );
@@ -2159,73 +2082,88 @@ export default function App() {
           {(
             [
               {
-                id: 'dashboard',
-                label: 'Resumen',
-                hint: 'Tu panorama',
-                icon: LayoutDashboard,
+                title: 'Mi dinero',
+                items: [
+                  {
+                    id: 'dashboard',
+                    label: 'Resumen',
+                    hint: 'Tu panorama',
+                    icon: LayoutDashboard,
+                  },
+                  {
+                    id: 'incomes',
+                    label: 'Ingresos y Cajero',
+                    hint: 'Entradas y efectivo',
+                    icon: TrendingUp,
+                  },
+                  {
+                    id: 'expenses',
+                    label: 'Gastos',
+                    hint: 'Egresos y compras',
+                    icon: TrendingDown,
+                  },
+                  {
+                    id: 'savings',
+                    label: 'Metas de Ahorro',
+                    hint: 'Ahorro con rumbo',
+                    icon: Target,
+                  },
+                ],
               },
               {
-                id: 'incomes',
-                label: 'Ingresos y Cajero',
-                hint: 'Entradas y efectivo',
-                icon: TrendingUp,
-              },
-              {
-                id: 'expenses',
-                label: 'Gastos',
-                hint: 'Egresos y compras',
-                icon: TrendingDown,
-              },
-              {
-                id: 'savings',
-                label: 'Metas de Ahorro',
-                hint: 'Ahorro con rumbo',
-                icon: Target,
-              },
-              {
-                id: 'gmail_sync',
-                label: 'Gmail Sync',
-                hint: 'Alertas bancarias',
-                icon: Mail,
-              },
-              {
-                id: 'sync_settings',
-                label: 'Nube y Compartir',
-                hint: 'Espacio compartido',
-                icon: CloudLightning,
-              },
-              {
-                id: 'topics',
-                label: 'Categorías',
-                hint: 'Estructura',
-                icon: Shapes,
+                title: 'Ajustes',
+                items: [
+                  {
+                    id: 'topics',
+                    label: 'Categorías',
+                    hint: 'Estructura',
+                    icon: Shapes,
+                  },
+                  {
+                    id: 'sync_settings',
+                    label: 'Nube y Compartir',
+                    hint: 'Espacio compartido',
+                    icon: CloudLightning,
+                  },
+                ],
               },
             ] as const
-          ).map((tab) => {
-            const Icon = tab.icon;
-            const isSelected = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
-                  isSelected
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
-                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+          ).map((section, sectionIndex) => (
+            <div key={section.title} className="flex flex-col gap-1">
+              <p
+                className={`px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground ${
+                  sectionIndex === 0 ? '' : 'pt-4'
                 }`}
               >
-                <Icon
-                  className={`h-5 w-5 ${isSelected ? 'text-primary' : ''}`}
-                />
-                <div className="flex flex-col">
-                  <span className="text-sm">{tab.label}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {tab.hint}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                {section.title}
+              </p>
+              {section.items.map((tab) => {
+                const Icon = tab.icon;
+                const isSelected = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                    className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
+                      isSelected
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                        : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+                    }`}
+                  >
+                    <Icon
+                      className={`h-5 w-5 ${isSelected ? 'text-primary' : ''}`}
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-sm">{tab.label}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {tab.hint}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Bottom card */}
@@ -2342,25 +2280,9 @@ export default function App() {
             >
               <div className="mx-auto mb-6 h-1.5 w-12 rounded-full bg-border" />
               <div className="grid gap-4">
-                <button
-                  onClick={() => {
-                    setActiveTab('gmail_sync');
-                    setIsMoreSheetOpen(false);
-                  }}
-                  className="flex items-center gap-4 rounded-2xl p-4 transition-colors hover:bg-muted"
-                >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                    <Mail className="h-6 w-6" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-semibold text-foreground">
-                      Gmail Sync
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      Sincronizar alertas bancarias
-                    </div>
-                  </div>
-                </button>
+                <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Ajustes
+                </p>
                 <button
                   onClick={() => {
                     setActiveTab('sync_settings');
@@ -2399,6 +2321,9 @@ export default function App() {
                     </div>
                   </div>
                 </button>
+                <p className="px-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Acciones
+                </p>
                 <button
                   onClick={() => {
                     handleRefreshAllData();
@@ -2581,22 +2506,6 @@ export default function App() {
                     onEditContribution={handleEditContribution}
                     onDeleteContribution={handleDeleteContribution}
                     currentAvailableIncomes={currentIncomesPool}
-                    formatCurrency={formatCurrency}
-                  />
-                )}
-
-                {activeTab === 'gmail_sync' && (
-                  <GmailSyncTab
-                    user={user}
-                    accessToken={gToken}
-                    onLogin={handleGmailLogin}
-                    topics={topics}
-                    incomes={incomes}
-                    expenses={expenses}
-                    onAddExpense={handleAddExpense}
-                    onAddIncome={handleAddIncome}
-                    onUpdateExpense={handleEditExpense}
-                    onUpdateIncome={handleEditIncome}
                     formatCurrency={formatCurrency}
                   />
                 )}
