@@ -1,8 +1,26 @@
 /// <reference types="vitest" />
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { createRequire } from 'node:module';
 import path from 'path';
 import {defineConfig} from 'vite';
+
+// Absolute path to the browser ESM build of @firebase/auth (test-only alias).
+function firebaseAuthBrowserEntry(): string {
+  const requireFromFirebase = createRequire(
+    createRequire(import.meta.url).resolve('firebase/package.json')
+  );
+  const authPkgPath = requireFromFirebase.resolve(
+    '@firebase/auth/package.json'
+  );
+  const authPkg = requireFromFirebase(authPkgPath) as {
+    exports: { '.': { browser: { import: string } } };
+  };
+  return path.join(
+    path.dirname(authPkgPath),
+    authPkg.exports['.'].browser.import
+  );
+}
 
 export default defineConfig(() => {
   return {
@@ -77,28 +95,16 @@ export default defineConfig(() => {
       // ASSERTION FAILED: Expected a class definition" at import time. Point
       // `@firebase/auth` at the browser build the app actually ships, and
       // inline every Firebase package so Vite applies this alias and all of
-      // them share one @firebase/app component registry.
-      alias: [
-        {
-          find: /^@firebase\/auth$/,
-          replacement: (() => {
-            const { createRequire } = process.getBuiltinModule('node:module');
-            const requireFromFirebase = createRequire(
-              createRequire(import.meta.url).resolve('firebase/package.json'),
-            );
-            const authPkgPath = requireFromFirebase.resolve(
-              '@firebase/auth/package.json',
-            );
-            const authPkg = requireFromFirebase(authPkgPath) as {
-              exports: { '.': { browser: { import: string } } };
-            };
-            return path.join(
-              path.dirname(authPkgPath),
-              authPkg.exports['.'].browser.import,
-            );
-          })(),
-        },
-      ],
+      // them share one @firebase/app component registry. Resolved only under
+      // vitest so `vite dev` / `vite build` never evaluate it.
+      alias: process.env.VITEST
+        ? [
+            {
+              find: /^@firebase\/auth$/,
+              replacement: firebaseAuthBrowserEntry(),
+            },
+          ]
+        : [],
       server: {
         deps: {
           inline: [/[\\/]@?firebase[\\/]/],
