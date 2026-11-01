@@ -35,3 +35,6 @@ AUDIT.md
 workspace_audit_report.md
 auditorias/
 openspec/
+
+# ODD feature logbooks (local only)
+odd/
