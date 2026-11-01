@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "Space": {
+      "title": "Space",
+      "description": "Un espacio financiero compartido o personal.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "members": { "type": "array" },
+        "startingSavings": { "type": "number" }
+      },
+      "required": ["id", "name", "ownerUid", "members", "startingSavings"]
+    },
+    "Topic": {
+      "title": "Topic",
+      "description": "Categoría o tópico de finanzas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["INCOME", "EXPENSE", "SAVINGS", "BOTH"] },
+        "icon": { "type": "string" },
+        "color": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "icon", "color"]
+    },
+    "Income": {
+      "title": "Income",
+      "description": "Registro de un ingreso de dinero.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "topicId": { "type": "string" },
+        "date": { "type": "string" },
+        "confirmed": { "type": "boolean" },
+        "method": { "type": "string", "enum": ["DIGITAL", "EFECTIVO"] }
+      },
+      "required": ["id", "description", "amount", "topicId", "date", "confirmed", "method"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Registro de un gasto de dinero.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "topicId": { "type": "string" },
+        "date": { "type": "string" },
+        "source": { "type": "string", "enum": ["INGRESOS", "AHORROS"] },
+        "confirmed": { "type": "boolean" },
+        "paymentMethod": { "type": "string", "enum": ["DEBITO", "CREDITO", "EFECTIVO"] }
+      },
+      "required": ["id", "description", "amount", "topicId", "date", "source", "confirmed", "paymentMethod"]
+    },
+    "SavingGoal": {
+      "title": "SavingGoal",
+      "description": "Meta de ahorro de finanzas.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "targetAmount": { "type": "number" },
+        "currentAmount": { "type": "number" },
+        "deadline": { "type": "string" },
+        "topicId": { "type": "string" }
+      },
+      "required": ["id", "name", "targetAmount", "currentAmount", "deadline", "topicId"]
+    },
+    "SavingContribution": {
+      "title": "SavingContribution",
+      "description": "Aporte a una meta de ahorro.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "goalId": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "goalId", "amount", "date", "description"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "Retiro de efectivo desde cajeros.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "description", "amount", "date"]
+    }
+  },
+  "firestore": {
+    "/spaces/{spaceId}": {
+      "schema": "Space",
+      "description": "Detalles del espacio financiero."
+    },
+    "/spaces/{spaceId}/topics/{topicId}": {
+      "schema": "Topic",
+      "description": "Tópicos de presupuesto del espacio financiero."
+    },
+    "/spaces/{spaceId}/incomes/{incomeId}": {
+      "schema": "Income",
+      "description": "Ingresos registrados en este espacio financiero."
+    },
+    "/spaces/{spaceId}/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Gastos registrados en este espacio financiero."
+    },
+    "/spaces/{spaceId}/goals/{goalId}": {
+      "schema": "SavingGoal",
+      "description": "Metas de ahorro registradas en este espacio financiero."
+    },
+    "/spaces/{spaceId}/contributions/{contributionId}": {
+      "schema": "SavingContribution",
+      "description": "Aportes de ahorro en este espacio financiero."
+    },
+    "/spaces/{spaceId}/withdrawals/{withdrawalId}": {
+      "schema": "Withdrawal",
+      "description": "Retiros de efectivo en este espacio financiero."
+    }
+  }
+}

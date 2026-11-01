@@ -1,0 +1,68 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isSpaceMember(spaceId) {
+      return isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/spaces/$(spaceId)).data.members);
+    }
+    
+    function isSpaceOwner(spaceId) {
+      let data = get(/databases/$(database)/documents/spaces/$(spaceId)).data;
+      return isAuthenticated() && (data.ownerUid == request.auth.uid || data.ownerId == request.auth.uid);
+    }
+
+    // Profiles
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Spaces
+    match /spaces/{spaceId} {
+      allow create: if isAuthenticated(); // Anyone authenticated can create a space
+      allow read: if isAuthenticated();
+      // Owner has full update rights. Non-owner members may only mutate
+      // the shared savingsPool / startingSavings — never the members array.
+      allow update: if isAuthenticated() && (
+        isSpaceOwner(spaceId) ||
+        (resource.data.diff(request.resource.data).affectedKeys().hasOnly(['savingsPool', 'startingSavings']) && isSpaceMember(spaceId))
+      );
+      allow delete: if isSpaceOwner(spaceId);
+
+      // Pending transactions from webhooks
+      match /pending_transactions/{pendingId} {
+        allow read: if request.auth != null && isSpaceMember(spaceId);
+        allow create: if true;
+        allow update, delete: if request.auth != null && isSpaceMember(spaceId);
+      }
+
+      // Subcollections of Spaces (topics, incomes, expenses, etc.)
+      match /{subcollection}/{documentId} {
+        allow read, write: if isSpaceMember(spaceId);
+      }
+    }
+
+    // Access Requests (for joining spaces)
+    match /accessRequests/{requestId} {
+      // Requester can only create a request on their own behalf (no spoofing userId).
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId || 
+        isSpaceOwner(resource.data.spaceId)
+      );
+      allow update, delete: if isAuthenticated() && (
+        request.auth.uid == resource.data.userId || 
+        isSpaceOwner(resource.data.spaceId)
+      );
+    }
+  }
+}
