@@ -7,62 +7,125 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
-    function isSpaceMember(spaceId) {
-      return isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/spaces/$(spaceId)).data.members);
-    }
-    
-    function isSpaceOwner(spaceId) {
-      let data = get(/databases/$(database)/documents/spaces/$(spaceId)).data;
-      return isAuthenticated() && (data.ownerUid == request.auth.uid || data.ownerId == request.auth.uid);
+
+    function spaceData(spaceId) {
+      return get(/databases/$(database)/documents/spaces/$(spaceId)).data;
     }
 
-    // Profiles
+    // `ownerId` is a legacy alias of `ownerUid` kept for older space docs.
+    function isOwnerOf(data) {
+      return data.get('ownerUid', null) == request.auth.uid ||
+        data.get('ownerId', null) == request.auth.uid;
+    }
+
+    function isMemberOf(data) {
+      return request.auth.uid in data.get('members', []);
+    }
+
+    function isSpaceMember(spaceId) {
+      return isAuthenticated() && isMemberOf(spaceData(spaceId));
+    }
+
+    function isSpaceOwner(spaceId) {
+      return isAuthenticated() && isOwnerOf(spaceData(spaceId));
+    }
+
+    function canAccessSpace(spaceId) {
+      let data = spaceData(spaceId);
+      return isAuthenticated() && (isMemberOf(data) || isOwnerOf(data));
+    }
+
+    // Profiles: private to their owner.
     match /users/{userId} {
       allow read, write: if isOwner(userId);
     }
 
-    // Spaces
+    // Spaces: private to their members and owner.
     match /spaces/{spaceId} {
-      allow create: if isAuthenticated(); // Anyone authenticated can create a space
-      allow read: if isAuthenticated();
-      // Owner has full update rights. Non-owner members may only mutate
-      // the shared savingsPool / startingSavings — never the members array.
+      // A missing doc may be read so a client can tell "does not exist" (and
+      // create its own space) from "not allowed"; it reveals no data.
+      allow get: if isAuthenticated() &&
+        (resource == null || isMemberOf(resource.data) || isOwnerOf(resource.data));
+      // Queries must be constrained to the caller's own spaces
+      // (`members array-contains uid` or `ownerUid == uid`).
+      allow list: if isAuthenticated() &&
+        (request.auth.uid in resource.data.members ||
+          resource.data.ownerUid == request.auth.uid);
+      // Only for oneself, as the only member. A uid-derived id
+      // (`espacio_u_<uid>`) is reserved for that uid.
+      allow create: if isAuthenticated() &&
+        request.resource.data.ownerUid == request.auth.uid &&
+        request.resource.data.members == [request.auth.uid] &&
+        (!spaceId.matches('espacio_u_.*') ||
+          spaceId == 'espacio_u_' + request.auth.uid.lower());
+      // The owner updates anything but the ownership. Non-owner members may
+      // only change the shared savingsPool / startingSavings, never members.
       allow update: if isAuthenticated() && (
-        isSpaceOwner(spaceId) ||
-        (resource.data.diff(request.resource.data).affectedKeys().hasOnly(['savingsPool', 'startingSavings']) && isSpaceMember(spaceId))
+        (isOwnerOf(resource.data) &&
+          !resource.data.diff(request.resource.data).affectedKeys()
+            .hasAny(['ownerUid', 'ownerId'])) ||
+        (isMemberOf(resource.data) &&
+          resource.data.diff(request.resource.data).affectedKeys()
+            .hasOnly(['savingsPool', 'startingSavings']))
       );
-      allow delete: if isSpaceOwner(spaceId);
+      allow delete: if isAuthenticated() && isOwnerOf(resource.data);
 
-      // Pending transactions from webhooks
-      match /pending_transactions/{pendingId} {
-        allow read: if request.auth != null && isSpaceMember(spaceId);
-        allow create: if true;
-        allow update, delete: if request.auth != null && isSpaceMember(spaceId);
+      // Requests to join the space. Web requests are created by the backend
+      // (POST /api/spaces/request-access) as `req_<uid>`; Telegram requests
+      // as `req_tg_<chatId>`.
+      match /access_requests/{reqId} {
+        function isOwnRequest() {
+          return reqId == 'req_' + request.auth.uid;
+        }
+
+        allow get: if isAuthenticated() && (
+          isOwnRequest() ||
+          (resource != null && resource.data.get('userId', null) == request.auth.uid) ||
+          canAccessSpace(spaceId)
+        );
+        allow list: if canAccessSpace(spaceId);
+        // The requester may file its own pending request, as itself only.
+        allow create: if isAuthenticated() && isOwnRequest() &&
+          request.resource.data.keys().hasOnly(
+            ['userId', 'email', 'displayName', 'status', 'type', 'createdAt']) &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.status == 'pending' &&
+          (!('email' in request.resource.data) ||
+            request.resource.data.email == request.auth.token.email);
+        // Only the owner decides; an approved/rejected/revoked status must
+        // carry `decidedBy` == the deciding owner (contract C2). The
+        // requester may only cancel its own still-pending request.
+        allow update: if isAuthenticated() && (
+          (isSpaceOwner(spaceId) &&
+            resource.data.diff(request.resource.data).affectedKeys()
+              .hasOnly(['status', 'decidedBy', 'decidedAt']) &&
+            (!(request.resource.data.status in ['approved', 'rejected', 'revoked']) ||
+              request.resource.data.get('decidedBy', null) == request.auth.uid)) ||
+          (isOwnRequest() &&
+            resource.data.status == 'pending' &&
+            request.resource.data.status == 'cancelled' &&
+            resource.data.diff(request.resource.data).affectedKeys()
+              .hasOnly(['status', 'cancelledAt']))
+        );
+        allow delete: if isSpaceOwner(spaceId);
       }
 
-      // Subcollections of Spaces (topics, incomes, expenses, etc.)
-      match /{subcollection}/{documentId} {
+      // Pending transactions (Telegram drafts). The backend writes them with
+      // the Admin SDK; clients only as members.
+      match /pending_transactions/{pendingId} {
         allow read, write: if isSpaceMember(spaceId);
       }
-    }
 
-    // Access Requests (for joining spaces)
-    match /accessRequests/{requestId} {
-      // Requester can only create a request on their own behalf (no spoofing userId).
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow read: if isAuthenticated() && (
-        request.auth.uid == resource.data.userId || 
-        isSpaceOwner(resource.data.spaceId)
-      );
-      allow update, delete: if isAuthenticated() && (
-        request.auth.uid == resource.data.userId || 
-        isSpaceOwner(resource.data.spaceId)
-      );
+      // Data subcollections (topics, incomes, expenses, goals, ...).
+      match /{subcollection}/{documentId} {
+        allow read, write: if
+          !(subcollection in ['access_requests', 'pending_transactions']) &&
+          canAccessSpace(spaceId);
+      }
     }
   }
 }

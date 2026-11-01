@@ -22,9 +22,9 @@
   - Consulta en cualquier momento cuánto tienes disponible, el estado de tus topes o el resumen del mes.
   - Edita o aprueba borradores desde las tarjetas interactivas de Telegram o desde el banner de la Web App con sincronización bidireccional instantánea.
 - 🛡️ **Espacios Compartidos con Seguridad Zero-Trust**:
-  - Cada espacio genera un código único privado (`ESP-XXXXXX`).
-  - Aun teniendo el código del espacio, cualquier intento de conexión desde la Web o desde Telegram (`/conectar ESP-XXXXXX`) genera una **alerta en tiempo real para el propietario del espacio**, quien debe aprobar explícitamente el acceso (y puede revocarlo en un clic).
-- 📬 **Sincronización con Gmail & Webhooks Bancarios**: Lectura opcional de alertas bancarias en Gmail y endpoint para Atajos de iOS (SMS bancarios).
+  - Cada espacio genera un código único privado (`ESP-XXXXXXXX`), y solo sus miembros pueden leer sus datos.
+  - Aun teniendo el código del espacio, cualquier intento de conexión desde la Web o desde Telegram (`/conectar ESP-XXXXXXXX`) genera una **alerta en tiempo real para el propietario del espacio**, quien debe aprobar explícitamente el acceso (y puede revocarlo en un clic).
+- 📬 **Sincronización con Gmail**: Lectura opcional de alertas bancarias en Gmail.
 
 ---
 
@@ -152,8 +152,10 @@ gcloud run deploy raiz-finanzas-api \
   --region us-central1 \
   --allow-unauthenticated \
   --project TU_PROJECT_ID \
-  --set-env-vars GOOGLE_CLOUD_PROJECT="TU_PROJECT_ID",VITE_FIREBASE_PROJECT_ID="TU_PROJECT_ID",VITE_FIREBASE_API_KEY="TU_FIREBASE_API_KEY",TELEGRAM_BOT_TOKEN="TU_TELEGRAM_BOT_TOKEN",TELEGRAM_WEBHOOK_SECRET="TU_SECRETO_DEL_WEBHOOK",GEMINI_API_KEY="TU_GEMINI_API_KEY"
+  --set-env-vars GOOGLE_CLOUD_PROJECT="TU_PROJECT_ID",VITE_FIREBASE_PROJECT_ID="TU_PROJECT_ID",TELEGRAM_BOT_TOKEN="TU_TELEGRAM_BOT_TOKEN",TELEGRAM_WEBHOOK_SECRET="TU_SECRETO_DEL_WEBHOOK",GEMINI_API_KEY="TU_GEMINI_API_KEY"
 ```
+
+   - `GOOGLE_CLOUD_PROJECT` es obligatorio en el backend: de ahí toma el ID del proyecto de Firebase (si falta, usa `FIREBASE_PROJECT_ID` y luego `VITE_FIREBASE_PROJECT_ID`). Si no hay ninguno o el valor es una plantilla (`your-firebase-project-id` o cualquier valor que empiece por `your-`), el servidor registra un error `[config]` al arrancar y los endpoints que usan Firebase responden 503.
 
 3. **Conectar el Webhook de Telegram a tu URL de Cloud Run**:
    - Una vez desplegado, Cloud Run te dará una URL como `https://raiz-finanzas-api-xxxxx.us-central1.run.app`.
@@ -165,8 +167,8 @@ curl -X POST "https://api.telegram.org/bot<TU_TELEGRAM_BOT_TOKEN>/setWebhook" \
   -d '{"url": "https://<TU_URL_DE_CLOUD_RUN>/api/webhook/telegram", "secret_token": "<TU_SECRETO_DEL_WEBHOOK>"}'
 ```
 
-   - Si el webhook ya estaba registrado, no tienes que repetir este paso al cambiar el secreto: al arrancar, el backend consulta `getWebhookInfo` y vuelve a registrar la misma URL (y los mismos `allowed_updates`) con el `TELEGRAM_WEBHOOK_SECRET` configurado.
-   - Usa el mismo `TELEGRAM_WEBHOOK_SECRET` en todos los entornos que compartan el mismo bot: un servidor local con el token del bot y otro secreto volvería a registrar el webhook de producción con ese otro secreto.
+   - Si el webhook ya estaba registrado, no tienes que repetir este paso al cambiar el secreto: al arrancar en Cloud Run (donde existe `K_SERVICE`), el backend consulta `getWebhookInfo` y vuelve a registrar la misma URL (y los mismos `allowed_updates`) con el `TELEGRAM_WEBHOOK_SECRET` configurado.
+   - Fuera de Cloud Run (por ejemplo, un servidor local) ese re-registro se omite y queda en el log, así que un servidor local nunca cambia el webhook de producción. Si tienes varios servicios de Cloud Run con el mismo bot, todos deben usar el mismo `TELEGRAM_WEBHOOK_SECRET`.
 
 4. **Desplegar la Web App en Firebase Hosting**:
 
@@ -193,9 +195,20 @@ npx firebase-tools deploy --only hosting --project TU_PROJECT_ID
 | `npm run dev` | Inicia el servidor de desarrollo (Frontend Vite + Backend Express) en el puerto `3000`. |
 | `npm run build` | Compila la aplicación web en `dist/` y empaqueta el servidor en `dist/server.cjs`. |
 | `npm start` | Ejecuta el servidor compilado en producción (`node dist/server.cjs`). |
-| `npm run test:run` | Ejecuta la suite de pruebas automatizadas con Vitest. |
+| `npm run test:run` | Ejecuta la suite de pruebas automatizadas con Vitest (sin las pruebas de reglas de Firestore). |
+| `npm run test:rules` | Prueba `firestore.rules` contra el emulador local de Firestore (`firebase emulators:exec`, proyecto `demo-raiz`). Requiere Firebase CLI y Java (ver abajo). |
 | `npm run typecheck` | Verifica los tipos de TypeScript sin emitir archivos. |
 | `scripts/check-public-safety.sh --all` | Audita el repositorio en busca de secretos y datos personales antes de publicar. |
+
+**Pruebas de reglas de Firestore (`test:rules`)**: el emulador de Firestore necesita Java (JDK 21) en el `PATH`. En macOS con Homebrew:
+
+```bash
+brew install openjdk@21
+export PATH="$(brew --prefix openjdk@21)/bin:$PATH"
+npm run test:rules
+```
+
+Las pruebas viven en `tests/rules/` y usan `@firebase/rules-unit-testing`; no se conectan a ningún proyecto real.
 
 ### 🔒 Protección contra publicar secretos
 

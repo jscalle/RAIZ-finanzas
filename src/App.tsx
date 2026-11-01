@@ -116,10 +116,13 @@ import {
   Space,
   AccessRequest,
   requestAccessToSpace,
+  resolveDefaultSpaceId,
+  isPermissionDenied,
   subscribeToPendingAccessRequests,
   subscribeToAccessRequestStatus,
   approveAccessRequest,
   rejectAccessRequest,
+  cancelAccessRequest,
   regenerateSpaceCode,
   readStoredToken,
   clearStoredToken,
@@ -182,6 +185,9 @@ export default function App() {
   const [currentSpaceId, setCurrentSpaceId] = useState<string>(() => {
     return localStorage.getItem('p_current_space_id') || '';
   });
+  // The signed-in user's own default space (S8): remembered or already owned
+  // for existing users, uid-derived for new ones. Empty until resolved.
+  const [personalSpaceId, setPersonalSpaceId] = useState<string>('');
   const [spaceInfo, setSpaceInfo] = useState<Space | null>(null);
   const [syncEnabled, setSyncEnabled] = useState<boolean>(false);
   const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
@@ -305,6 +311,44 @@ export default function App() {
     return () => unsubAuth();
   }, []);
 
+  // Moves the app to the user's own space after losing access to the current
+  // one (revoked, or never granted) and says why. Clearing the current space
+  // lets the space loader below open the default space once it is ready.
+  const switchToPersonalSpace = useCallback((message: string) => {
+    setCurrentSpaceId('');
+    localStorage.removeItem('p_current_space_id');
+    setToast({ message, type: 'warning' });
+  }, []);
+
+  // 0. Resolve the signed-in user's default space id (S8)
+  const userUid = user?.uid;
+  const userEmail = user?.email;
+  useEffect(() => {
+    if (!syncEnabled || !userUid) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPersonalSpaceId('');
+      return;
+    }
+    let active = true;
+    resolveDefaultSpaceId({ uid: userUid, email: userEmail })
+      .then((spaceId) => {
+        if (active) setPersonalSpaceId(spaceId);
+      })
+      .catch((err) => {
+        console.error('Could not resolve the default space:', err);
+        if (active) {
+          setToast({
+            message:
+              'No se pudo cargar tu espacio en la nube. Revisa tu conexión e intenta de nuevo.',
+            type: 'error',
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [syncEnabled, userUid, userEmail]);
+
   // 1. Load active space metadata on demand or auto-initialize if empty
   useEffect(() => {
     if (!syncEnabled) {
@@ -313,43 +357,77 @@ export default function App() {
       return;
     }
 
-    const defaultSpaceId = currentSpaceId
+    // Without a stored space, wait for the resolved default space.
+    const activeSpaceId = currentSpaceId
       ? normalizeSpaceId(currentSpaceId)
-      : user?.email
-        ? normalizeSpaceId(user.email.split('@')[0])
-        : 'espacio_compartido';
+      : personalSpaceId;
+    if (!activeSpaceId) return;
 
-    if (!currentSpaceId || currentSpaceId !== defaultSpaceId) {
-      setCurrentSpaceId(defaultSpaceId);
-      localStorage.setItem('p_current_space_id', defaultSpaceId);
-    }
-
-    if (defaultSpaceId) {
-      getOrCreateSpace(
-        defaultSpaceId,
-        `Presupuesto de ${user?.email?.split('@')[0] || 'Usuario'}`,
-        user?.uid || 'guest',
-        user?.email || ''
-      )
-        .then((space) => {
-          setSpaceInfo(space);
-          setStartingSavings(space.startingSavings);
-        })
-        .catch((err) => {
-          console.error('Error loading active space:', err);
-        });
-    }
-  }, [syncEnabled, currentSpaceId, user, setStartingSavings]);
+    let active = true;
+    getOrCreateSpace(
+      activeSpaceId,
+      `Presupuesto de ${user?.email?.split('@')[0] || 'Usuario'}`,
+      user?.uid || '',
+      user?.email || ''
+    )
+      .then((space) => {
+        if (!active) return;
+        // Selected only once the space doc exists: the data listeners need it
+        // to pass the membership rules.
+        if (currentSpaceId !== activeSpaceId) {
+          setCurrentSpaceId(activeSpaceId);
+          localStorage.setItem('p_current_space_id', activeSpaceId);
+        }
+        setSpaceInfo(space);
+        setStartingSavings(space.startingSavings);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.error('Error loading active space:', err);
+        if (!isPermissionDenied(err)) {
+          const error = err as Error;
+          setToast({
+            message: `No se pudo cargar el espacio "${activeSpaceId}": ${error.message || err}`,
+            type: 'error',
+          });
+        } else if (activeSpaceId !== personalSpaceId) {
+          switchToPersonalSpace(
+            `No tienes acceso al espacio "${activeSpaceId}". Se cambió a tu espacio personal.`
+          );
+        } else {
+          setToast({
+            message: `No tienes acceso al espacio "${activeSpaceId}".`,
+            type: 'error',
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    syncEnabled,
+    currentSpaceId,
+    personalSpaceId,
+    user,
+    setStartingSavings,
+    switchToPersonalSpace,
+  ]);
 
   // Offline Sync Queue Flush
   useEffect(() => {
     if (!syncEnabled || !currentSpaceId) return;
 
     const handleFlush = async () => {
-      const flushedCount = await flushSyncQueue(currentSpaceId);
-      if (flushedCount > 0) {
+      const { flushed, dropped } = await flushSyncQueue(currentSpaceId);
+      if (dropped.length > 0) {
+        // Rule refusals are not retryable: tell the user they were dropped.
         setToast({
-          message: `¡Sincronizados ${flushedCount} registros pendientes en la nube!`,
+          message: `No tienes permiso para guardar en este espacio: se descartaron ${dropped.length} registros pendientes que no se pudieron sincronizar.`,
+          type: 'error',
+        });
+      } else if (flushed > 0) {
+        setToast({
+          message: `¡Sincronizados ${flushed} registros pendientes en la nube!`,
           type: 'success',
         });
       }
@@ -518,36 +596,46 @@ export default function App() {
 
     const cleanId = normalizeSpaceId(currentSpaceId);
     const spaceRef = doc(db, 'spaces', cleanId);
+    const isPersonalSpace = cleanId === personalSpaceId;
+    const revokedMessage =
+      'Tu acceso a este espacio fue revocado por el anfitrión. Se cambió a tu espacio personal.';
 
-    const unsubSpace = onSnapshot(spaceRef, (snap) => {
-      if (snap.exists()) {
-        const spaceData = snap.data() as Space;
-        setSpaceInfo(spaceData);
+    const unsubSpace = onSnapshot(
+      spaceRef,
+      (snap) => {
+        if (snap.exists()) {
+          const spaceData = snap.data() as Space;
+          setSpaceInfo(spaceData);
 
-        const myPersonalSpaceId = normalizeSpaceId(
-          user.email ? user.email.split('@')[0] : ''
-        );
-
-        // Auto-switch to personal space if revoked
-        if (
-          cleanId !== myPersonalSpaceId &&
-          (!spaceData.members || !spaceData.members.includes(user.uid))
-        ) {
-          handleJoinSpace(
-            myPersonalSpaceId,
-            `Presupuesto de ${user.email?.split('@')[0]}`
-          );
-          setToast({
-            message:
-              'Tu acceso a este espacio fue revocado por el anfitrión. Se cambió a tu espacio personal.',
-            type: 'warning',
-          });
+          // Auto-switch to personal space if revoked
+          if (
+            !isPersonalSpace &&
+            spaceData.ownerUid !== user.uid &&
+            (!spaceData.members || !spaceData.members.includes(user.uid))
+          ) {
+            switchToPersonalSpace(revokedMessage);
+          }
+        }
+      },
+      (error) => {
+        // Spaces are readable only by their members, so a revoked member's
+        // listener fails with permission-denied instead of a snapshot.
+        if (isPermissionDenied(error) && !isPersonalSpace) {
+          switchToPersonalSpace(revokedMessage);
+        } else {
+          console.warn('Error syncing the active space:', error);
         }
       }
-    });
+    );
 
     return () => unsubSpace();
-  }, [syncEnabled, currentSpaceId, user]);
+  }, [
+    syncEnabled,
+    currentSpaceId,
+    user,
+    personalSpaceId,
+    switchToPersonalSpace,
+  ]);
 
   // 2b. Sync Host Pending Access Requests (Real-time Host Notification)
   useEffect(() => {
@@ -620,15 +708,8 @@ export default function App() {
         }
         setSyncEnabled(true);
         setToast({ message: '¡Inicio de sesión exitoso!', type: 'success' });
-        // Default to a space named after the user's email if no space selected
-        if (!currentSpaceId) {
-          const defaultId = `espacio_${res.user.email?.split('@')[0].replace(/\W/g, '')}`;
-          await handleJoinSpace(
-            defaultId,
-            `Presupuesto de ${res.user.email?.split('@')[0]}`,
-            res.user
-          );
-        }
+        // Without a selected space, the space effects load the user's default
+        // space (resolveDefaultSpaceId).
       }
     } catch (err) {
       const error = err as Error & { code?: string };
@@ -688,14 +769,6 @@ export default function App() {
       setUser(authUser);
       setSyncEnabled(true);
       setToast({ message: '¡Inicio de sesión exitoso!', type: 'success' });
-      if (!currentSpaceId) {
-        const defaultId = `espacio_${authUser.email?.split('@')[0].replace(/\W/g, '')}`;
-        await handleJoinSpace(
-          defaultId,
-          `Presupuesto de ${authUser.email?.split('@')[0]}`,
-          authUser
-        );
-      }
     } catch (err) {
       const error = err as Error & { code?: string };
       console.error(error);
@@ -735,14 +808,6 @@ export default function App() {
         message: '¡Registro e inicio de sesión exitoso!',
         type: 'success',
       });
-      if (!currentSpaceId) {
-        const defaultId = `espacio_${authUser.email?.split('@')[0].replace(/\W/g, '')}`;
-        await handleJoinSpace(
-          defaultId,
-          `Presupuesto de ${authUser.email?.split('@')[0]}`,
-          authUser
-        );
-      }
     } catch (err) {
       const error = err as Error & { code?: string };
       console.error(error);
@@ -788,38 +853,45 @@ export default function App() {
     localStorage.removeItem('p_current_space_id');
   };
 
+  // Rejects on the first failed write so the caller never reports success.
   async function uploadCurrentDataToSpace(targetSpaceId: string) {
-    try {
-      const spaceId = normalizeSpaceId(targetSpaceId);
-      if (startingSavings) {
-        await updateSpaceSavings(spaceId, startingSavings);
-      }
-      for (const t of topics.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
-        await saveSpaceDocument(spaceId, 'topics', t.id, t);
-      }
-      for (const i of incomes.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
-        await saveSpaceDocument(spaceId, 'incomes', i.id, i);
-      }
-      for (const e of expenses.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
-        await saveSpaceDocument(spaceId, 'expenses', e.id, e);
-      }
-      for (const g of goals.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
-        await saveSpaceDocument(spaceId, 'goals', g.id, g);
-      }
-      for (const c of contributions.filter(
-        (item) => !DEMO_SEED_IDS.has(item.id)
-      )) {
-        await saveSpaceDocument(spaceId, 'contributions', c.id, c);
-      }
-      for (const w of withdrawals.filter(
-        (item) => !DEMO_SEED_IDS.has(item.id)
-      )) {
-        await saveSpaceDocument(spaceId, 'withdrawals', w.id, w);
-      }
-    } catch (err) {
-      console.warn('Upload to space warning:', err);
+    const spaceId = normalizeSpaceId(targetSpaceId);
+    if (startingSavings) {
+      await updateSpaceSavings(spaceId, startingSavings);
+    }
+    for (const t of topics.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
+      await saveSpaceDocument(spaceId, 'topics', t.id, t);
+    }
+    for (const i of incomes.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
+      await saveSpaceDocument(spaceId, 'incomes', i.id, i);
+    }
+    for (const e of expenses.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
+      await saveSpaceDocument(spaceId, 'expenses', e.id, e);
+    }
+    for (const g of goals.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
+      await saveSpaceDocument(spaceId, 'goals', g.id, g);
+    }
+    for (const c of contributions.filter(
+      (item) => !DEMO_SEED_IDS.has(item.id)
+    )) {
+      await saveSpaceDocument(spaceId, 'contributions', c.id, c);
+    }
+    for (const w of withdrawals.filter((item) => !DEMO_SEED_IDS.has(item.id))) {
+      await saveSpaceDocument(spaceId, 'withdrawals', w.id, w);
     }
   }
+
+  // Tells the user a background cloud write failed (S9). Rule refusals
+  // (permission-denied) are never retried.
+  const reportCloudWriteFailure = (err: unknown) => {
+    console.error('Cloud write failed:', err);
+    setToast({
+      message: isPermissionDenied(err)
+        ? 'No tienes permiso para guardar cambios en este espacio. El cambio no se sincronizó.'
+        : 'No se pudo sincronizar un cambio con la nube. Revisa tu conexión.',
+      type: 'error',
+    });
+  };
 
   async function handleJoinSpace(
     spaceId: string,
@@ -873,7 +945,9 @@ export default function App() {
     } catch (err) {
       const error = err as Error & { code?: string };
       setToast({
-        message: `Error al unirse al espacio: ${error.message || err}`,
+        message: isPermissionDenied(err)
+          ? `No tienes acceso al espacio "${cleanId}". Solicita acceso al anfitrión con el código del espacio.`
+          : `Error al unirse al espacio: ${error.message || err}`,
         type: 'error',
       });
     }
@@ -891,20 +965,23 @@ export default function App() {
 
     if (!codeOrId.trim()) return;
 
-    try {
-      const res = await requestAccessToSpace(codeOrId, {
-        uid: user.uid,
-        email: user.email || '',
-        displayName: user.displayName || undefined,
-      });
+    // The user's own default space needs no request (and may not exist yet).
+    if (personalSpaceId && normalizeSpaceId(codeOrId) === personalSpaceId) {
+      await handleJoinSpace(personalSpaceId, spaceName);
+      return;
+    }
 
-      if (res.status === 'approved') {
-        await handleJoinSpace(res.space.id, spaceName || res.space.name);
+    try {
+      // The backend resolves the code and files the request (contract C1).
+      const res = await requestAccessToSpace(codeOrId);
+
+      if (res.status === 'member' || res.status === 'approved') {
+        await handleJoinSpace(res.spaceId, spaceName || res.spaceName);
       } else if (res.status === 'pending') {
         const pendingObj = {
-          spaceId: res.space.id,
-          requestId: res.requestId!,
-          spaceName: res.space.name || res.space.id,
+          spaceId: res.spaceId,
+          requestId: res.requestId || `req_${user.uid}`,
+          spaceName: res.spaceName,
         };
         setActivePendingRequest(pendingObj);
         localStorage.setItem(
@@ -913,7 +990,7 @@ export default function App() {
         );
 
         setToast({
-          message: `⏳ Solicitud enviada a "${res.space.name || res.space.id}". Esperando aprobación del anfitrión...`,
+          message: `⏳ Solicitud enviada a "${res.spaceName}". Esperando aprobación del anfitrión...`,
           type: 'info',
         });
       }
@@ -980,7 +1057,7 @@ export default function App() {
   const handleCancelMyRequest = async () => {
     if (activePendingRequest) {
       try {
-        await rejectAccessRequest(
+        await cancelAccessRequest(
           activePendingRequest.spaceId,
           activePendingRequest.requestId
         );
@@ -1089,9 +1166,7 @@ export default function App() {
       }
 
       // 3. Save to cloud if sync enabled, or queue for sync if space ID is present
-      const activeSpaceId =
-        currentSpaceId ||
-        (user?.email ? normalizeSpaceId(user.email.split('@')[0]) : '');
+      const activeSpaceId = currentSpaceId || personalSpaceId;
       if (syncEnabled && activeSpaceId) {
         await saveSpaceDocument(activeSpaceId, subcol, id, item);
       } else if (activeSpaceId) {
@@ -1105,10 +1180,15 @@ export default function App() {
     } catch (err) {
       const error = err as Error & { code?: string };
       console.error(`Error al guardar en ${subcol}:`, err);
-      const activeSpaceId =
-        currentSpaceId ||
-        (user?.email ? normalizeSpaceId(user.email.split('@')[0]) : '');
-      if (activeSpaceId) {
+      const activeSpaceId = currentSpaceId || personalSpaceId;
+      if (isPermissionDenied(err)) {
+        // A rules refusal never succeeds later: do not queue it (S9).
+        setToast({
+          message:
+            'No tienes permiso para guardar en este espacio. El registro no se sincronizó con la nube.',
+          type: 'error',
+        });
+      } else if (activeSpaceId) {
         addToSyncQueue(activeSpaceId, {
           id,
           subcol,
@@ -1148,7 +1228,13 @@ export default function App() {
     } catch (err) {
       const error = err as Error & { code?: string };
       console.error(`Error al eliminar de ${subcol}:`, err);
-      if (syncEnabled && currentSpaceId) {
+      if (isPermissionDenied(err)) {
+        setToast({
+          message:
+            'No tienes permiso para eliminar en este espacio. El cambio no se sincronizó con la nube.',
+          type: 'error',
+        });
+      } else if (syncEnabled && currentSpaceId) {
         addToSyncQueue(currentSpaceId, { id, subcol, action: 'delete' });
         setToast({
           message: `Eliminado localmente. Se sincronizará cuando haya conexión.`,
@@ -1577,13 +1663,13 @@ export default function App() {
           currentSpaceId,
           'pending_transactions',
           tx.id
-        ).catch(console.error);
+        ).catch(reportCloudWriteFailure);
         syncTelegramDraftAction(tx, 'APPROVED');
       } else {
         saveSpaceDocument(currentSpaceId, 'pending_transactions', tx.id, {
           ...tx,
           status: 'APPROVED',
-        }).catch(console.error);
+        }).catch(reportCloudWriteFailure);
       }
     }
 
@@ -1658,13 +1744,13 @@ export default function App() {
             currentSpaceId,
             'pending_transactions',
             tx.id
-          ).catch(console.error);
+          ).catch(reportCloudWriteFailure);
           syncTelegramDraftAction(tx, 'APPROVED');
         } else {
           saveSpaceDocument(currentSpaceId, 'pending_transactions', tx.id, {
             ...tx,
             status: 'APPROVED',
-          }).catch(console.error);
+          }).catch(reportCloudWriteFailure);
         }
       }
     });
@@ -1728,7 +1814,7 @@ export default function App() {
           currentSpaceId,
           'pending_transactions',
           pendingTx.id
-        ).catch(console.error);
+        ).catch(reportCloudWriteFailure);
         syncTelegramDraftAction(pendingTx, 'APPROVED');
       } else {
         saveSpaceDocument(
@@ -1739,7 +1825,7 @@ export default function App() {
             ...pendingTx,
             status: 'APPROVED',
           }
-        ).catch(console.error);
+        ).catch(reportCloudWriteFailure);
       }
     }
 
@@ -1771,13 +1857,13 @@ export default function App() {
           currentSpaceId,
           'pending_transactions',
           tx.id
-        ).catch(console.error);
+        ).catch(reportCloudWriteFailure);
         syncTelegramDraftAction(tx, 'DISCARDED');
       } else {
         saveSpaceDocument(currentSpaceId, 'pending_transactions', tx.id, {
           ...tx,
           status: 'DISCARDED',
-        }).catch(console.error);
+        }).catch(reportCloudWriteFailure);
       }
     }
   };
@@ -1896,7 +1982,9 @@ export default function App() {
         if (g.id === goalId) {
           const updated = { ...g, currentAmount: g.currentAmount + diff };
           if (syncEnabled && currentSpaceId) {
-            saveSpaceDocument(currentSpaceId, 'goals', g.id, updated);
+            saveSpaceDocument(currentSpaceId, 'goals', g.id, updated).catch(
+              reportCloudWriteFailure
+            );
           }
           return updated;
         }
@@ -1906,7 +1994,9 @@ export default function App() {
             currentAmount: Math.max(0, g.currentAmount - oldContrib.amount),
           };
           if (syncEnabled && currentSpaceId) {
-            saveSpaceDocument(currentSpaceId, 'goals', g.id, updated);
+            saveSpaceDocument(currentSpaceId, 'goals', g.id, updated).catch(
+              reportCloudWriteFailure
+            );
           }
           return updated;
         }
@@ -2011,6 +2101,19 @@ export default function App() {
   });
   return (
     <div className="flex min-h-screen flex-col md:flex-row bg-background text-foreground font-sans selection:bg-primary/20 selection:text-primary pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)]">
+      {/* Error / warning notifications (e.g. refused or failed cloud writes) */}
+      {toast && (toast.type === 'error' || toast.type === 'warning') && (
+        <div
+          role="alert"
+          className={`fixed left-1/2 bottom-24 md:bottom-6 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl backdrop-blur-md ${
+            toast.type === 'error'
+              ? 'border-rose-500/40 bg-rose-950/90 text-rose-100'
+              : 'border-amber-500/40 bg-amber-950/90 text-amber-100'
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
       {/* Sticky Host Notification Banner for Access Requests */}
       {pendingRequests.length > 0 && (
         <div className="absolute top-0 left-0 right-0 z-50 bg-gradient-to-r from-amber-500/20 via-cyan-500/20 to-amber-500/20 border-b border-amber-500/40 px-4 py-3 shadow-2xl backdrop-blur-md">
@@ -2508,6 +2611,7 @@ export default function App() {
                     user={user}
                     isAuthLoading={isAuthLoading}
                     currentSpaceId={currentSpaceId}
+                    personalSpaceId={personalSpaceId}
                     spaceInfo={spaceInfo}
                     pendingRequests={pendingRequests}
                     activePendingRequest={activePendingRequest}

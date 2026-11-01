@@ -23,6 +23,8 @@ import { SpaceMembersList } from './SpaceMembersList';
 interface SyncPanelProps {
   user: import('firebase/auth').User | null;
   currentSpaceId: string;
+  // The signed-in user's own default space (uid-derived, or its existing one).
+  personalSpaceId?: string;
   isAuthLoading?: boolean;
   spaceInfo: Space | null;
   pendingRequests?: AccessRequest[];
@@ -49,6 +51,7 @@ export default function SyncPanel({
   user,
   isAuthLoading = false,
   currentSpaceId,
+  personalSpaceId = '',
   spaceInfo,
   pendingRequests = [],
   activePendingRequest = null,
@@ -115,15 +118,11 @@ export default function SyncPanel({
 
   const effectiveSpaceId = currentSpaceId
     ? normalizeSpaceId(currentSpaceId)
-    : user?.email
-      ? normalizeSpaceId(user.email.split('@')[0])
-      : 'espacio_compartido';
+    : personalSpaceId;
   const displayCode = spaceInfo?.code || 'ESP-SECURE';
 
   // Quick space targets
-  const myPersonalSpaceId = user?.email
-    ? normalizeSpaceId(user.email.split('@')[0])
-    : '';
+  const myPersonalSpaceId = user ? personalSpaceId : '';
 
   const copyToClipboard = async (textToCopy: string) => {
     if (!textToCopy) return;
@@ -610,7 +609,7 @@ export default function SyncPanel({
 
               <p className="text-xs text-muted-foreground/80 font-light leading-relaxed">
                 Introduce el <strong>Código Único de Espacio</strong> (ej.{' '}
-                <code className="text-cyan-400 font-mono">ESP-XXXXXX</code>) o
+                <code className="text-cyan-400 font-mono">ESP-XXXXXXXX</code>) o
                 el ID del espacio para solicitar acceso al anfitrión.
               </p>
 
@@ -624,7 +623,7 @@ export default function SyncPanel({
                     required
                     value={targetSpaceId}
                     onChange={(e) => setTargetSpaceId(e.target.value)}
-                    placeholder="ej. ESP-9K2F7M o espacio_hogar"
+                    placeholder="ej. ESP-9K2F7M4Q o espacio_hogar"
                     className="w-full bg-card border border-border/40 rounded-xl px-4 py-2 text-xs text-foreground focus:outline-none focus:border-cyan-500/30 font-mono uppercase tracking-wider"
                   />
                   <span className="text-[10px] text-muted-foreground/80 block mt-1">

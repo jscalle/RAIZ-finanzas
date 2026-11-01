@@ -77,6 +77,10 @@ export default defineConfig(() => {
     },
     test: {
       environment: 'jsdom',
+      // Firestore rules tests need the emulator; they run only through
+      // `pnpm test:rules` (tests/rules/vitest.config.ts). The first two entries
+      // are vitest's default excludes.
+      exclude: ['**/node_modules/**', '**/.git/**', 'tests/rules/**'],
       // Node >= 25 exposes a built-in Web Storage `localStorage` global. It
       // shadows jsdom's implementation (vitest does not override globals that
       // already exist) and is `undefined` without --localstorage-file, which

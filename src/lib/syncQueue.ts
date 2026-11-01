@@ -1,4 +1,8 @@
-import { saveSpaceDocument, deleteSpaceDocument } from './firebase';
+import {
+  saveSpaceDocument,
+  deleteSpaceDocument,
+  isPermissionDenied,
+} from './firebase';
 
 export interface SyncQueueItem {
   id: string;
@@ -55,13 +59,23 @@ export function removeFromSyncQueue(
   setSyncQueue(spaceId, newQueue);
 }
 
-export async function flushSyncQueue(spaceId: string): Promise<number> {
+export interface FlushSyncQueueResult {
+  // Items written to the cloud and removed from the queue.
+  flushed: number;
+  // Items the security rules refused (permission-denied). They can never
+  // succeed, so they were removed from the queue; callers must tell the user.
+  dropped: SyncQueueItem[];
+}
+
+export async function flushSyncQueue(
+  spaceId: string
+): Promise<FlushSyncQueueResult> {
   const queue = getSyncQueue(spaceId);
-  if (queue.length === 0) return 0;
+  const result: FlushSyncQueueResult = { flushed: 0, dropped: [] };
+  if (queue.length === 0) return result;
 
   // Sort by timestamp just in case
   const sortedQueue = [...queue].sort((a, b) => a.timestamp - b.timestamp);
-  let flushedCount = 0;
 
   for (const item of sortedQueue) {
     try {
@@ -78,13 +92,21 @@ export async function flushSyncQueue(spaceId: string): Promise<number> {
         await deleteSpaceDocument(spaceId, item.subcol, item.id);
       }
       removeFromSyncQueue(spaceId, item.id, item.subcol);
-      flushedCount++;
+      result.flushed++;
     } catch (err) {
+      if (isPermissionDenied(err)) {
+        // Not retryable: drop it and report it instead of retrying forever.
+        console.error('Dropped a sync item refused by the rules', item, err);
+        removeFromSyncQueue(spaceId, item.id, item.subcol);
+        result.dropped.push(item);
+        continue;
+      }
       console.error('Failed to flush item', item, err);
-      // Stop flushing on first error assuming it's a network issue
+      // Stop flushing on the first retryable error (e.g. offline) and keep the
+      // remaining items queued for the next attempt.
       break;
     }
   }
 
-  return flushedCount;
+  return result;
 }

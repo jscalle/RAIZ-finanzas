@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import {
+  act,
   render,
   screen,
   fireEvent,
@@ -98,7 +99,26 @@ const H = vi.hoisted(() => {
     autoSignIn: true,
     token: 'gtoken-123' as string | null,
     pendingRequests: [] as unknown[],
+    // The uid-derived default space resolveDefaultSpaceId reports (S8).
+    personalSpaceId: 'espacio_u_uid_test',
+    // Space ids whose load fails with permission-denied (S9).
+    deniedSpaces: new Set<string>(),
+    // Error thrown by every cloud document write, if any (S9).
+    saveError: null as unknown,
+    // Contract C1 answer of POST /api/spaces/request-access.
+    requestAccessResult: {} as Record<string, unknown>,
   };
+
+  const permissionDenied = () =>
+    Object.assign(new Error('Missing or insufficient permissions.'), {
+      code: 'permission-denied',
+    });
+
+  // Live listeners App opens on a space doc, keyed by document path.
+  const spaceListeners = new Map<
+    string,
+    { next: (snap: unknown) => void; error?: (err: unknown) => void }
+  >();
 
   // Explicit call spies that survive mockReset (plain counters/args).
   const spy = {
@@ -108,10 +128,18 @@ const H = vi.hoisted(() => {
     googleGmailSignIn: 0,
     requestAccess: [] as unknown[][],
     approve: [] as unknown[][],
+    cancel: [] as unknown[][],
     fetchEmails: 0,
   };
 
-  return { fakeUser, cloudFixtures, control, spy };
+  return {
+    fakeUser,
+    cloudFixtures,
+    control,
+    spy,
+    permissionDenied,
+    spaceListeners,
+  };
 });
 
 vi.mock('./lib/firebase', () => ({
@@ -146,18 +174,26 @@ vi.mock('./lib/firebase', () => ({
   logout: async () => {
     H.spy.logout += 1;
   },
+  resolveDefaultSpaceId: async () => H.control.personalSpaceId,
+  isPermissionDenied: (err: unknown) =>
+    (err as { code?: string } | null)?.code === 'permission-denied',
   // Echoes the requested name so spaceInfo.name is assertable in the UI.
-  getOrCreateSpace: async (id: string, name: string) => ({
-    id,
-    name: name || id,
-    ownerUid: H.fakeUser.uid,
-    ownerEmail: H.fakeUser.email,
-    members: [H.fakeUser.uid],
-    startingSavings: 0,
-    code: 'ESP-TEST00',
-  }),
+  getOrCreateSpace: async (id: string, name: string) => {
+    if (H.control.deniedSpaces.has(id)) throw H.permissionDenied();
+    return {
+      id,
+      name: name || id,
+      ownerUid: H.fakeUser.uid,
+      ownerEmail: H.fakeUser.email,
+      members: [H.fakeUser.uid],
+      startingSavings: 0,
+      code: 'ESP-TEST0000',
+    };
+  },
   updateSpaceSavings: async () => {},
-  saveSpaceDocument: async () => {},
+  saveSpaceDocument: async () => {
+    if (H.control.saveError) throw H.control.saveError;
+  },
   deleteSpaceDocument: async () => {},
   // Synchronously feeds the matching cloud fixture into App's entity state.
   syncSpaceSubcollection: (
@@ -169,13 +205,9 @@ vi.mock('./lib/firebase', () => ({
     return () => {};
   },
   normalizeSpaceId: (raw: string) => raw,
-  requestAccessToSpace: async (codeOrId: string, requester: unknown) => {
-    H.spy.requestAccess.push([codeOrId, requester]);
-    return {
-      status: 'pending',
-      space: { id: 'space_target', name: 'Espacio Objetivo' },
-      requestId: 'req_1',
-    };
+  requestAccessToSpace: async (codeOrId: string) => {
+    H.spy.requestAccess.push([codeOrId]);
+    return H.control.requestAccessResult;
   },
   subscribeToPendingAccessRequests: (
     _spaceId: string,
@@ -189,6 +221,9 @@ vi.mock('./lib/firebase', () => ({
     H.spy.approve.push([spaceId, req]);
   },
   rejectAccessRequest: async () => {},
+  cancelAccessRequest: async (spaceId: string, requestId: string) => {
+    H.spy.cancel.push([spaceId, requestId]);
+  },
   syncTelegramDraftCard: async () => {},
   regenerateSpaceCode: async () => 'ESP-NEW000',
   removeSpaceMember: async () => {},
@@ -207,11 +242,19 @@ vi.mock('./lib/firebase', () => ({
 }));
 
 // App subscribes to the active space document directly through
-// firebase/firestore (doc + onSnapshot on the mocked `db`). Keep that listener
-// inert so spaceInfo comes solely from the getOrCreateSpace fixture above.
+// firebase/firestore (doc + onSnapshot on the mocked `db`). The listener only
+// records its callbacks so a test can fire them; otherwise spaceInfo comes
+// solely from the getOrCreateSpace fixture above.
 vi.mock('firebase/firestore', () => ({
   doc: (_db: unknown, ...segments: string[]) => ({ path: segments.join('/') }),
-  onSnapshot: () => () => {},
+  onSnapshot: (
+    ref: { path: string },
+    next: (snap: unknown) => void,
+    error?: (err: unknown) => void
+  ) => {
+    H.spaceListeners.set(ref.path, { next, error });
+    return () => {};
+  },
 }));
 
 vi.mock('./lib/gmail', () => ({
@@ -274,6 +317,17 @@ beforeEach(() => {
   H.control.autoSignIn = true;
   H.control.token = 'gtoken-123';
   H.control.pendingRequests = [];
+  H.control.personalSpaceId = 'espacio_u_uid_test';
+  H.control.deniedSpaces = new Set();
+  H.control.saveError = null;
+  H.control.requestAccessResult = {
+    status: 'pending',
+    spaceId: 'space_target',
+    spaceName: 'Espacio Objetivo',
+    requestId: 'req_1',
+  };
+  H.spaceListeners.clear();
+  H.spy.cancel = [];
   H.spy.emailSignIn = [];
   H.spy.emailSignUp = [];
   H.spy.logout = 0;
@@ -294,12 +348,14 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
 
     // The sidebar cloud card switches from "modo local" to the connected view,
-    // proving initAuth -> onAuthSuccess flipped syncEnabled and a default space
-    // id was derived from the user's email ("tester@demo.com" -> "tester").
+    // proving initAuth -> onAuthSuccess flipped syncEnabled. A new user's
+    // default space comes from resolveDefaultSpaceId (uid-derived, S8), never
+    // from the email local part ("tester").
     await waitFor(() => {
       expect(screen.getByText(/Conectado al espacio/i)).toBeInTheDocument();
     });
-    expect(screen.getByText('tester')).toBeInTheDocument();
+    expect(await screen.findByText('espacio_u_uid_test')).toBeInTheDocument();
+    expect(screen.queryByText('tester')).toBeNull();
     expect(screen.queryByText('Trabajando en modo local.')).toBeNull();
   });
 
@@ -423,7 +479,7 @@ describe('App signed-in + cloud sync', () => {
     await openSyncSettings();
 
     fireEvent.change(
-      screen.getByPlaceholderText('ej. ESP-9K2F7M o espacio_hogar'),
+      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
       { target: { value: 'ESP-TARGET' } }
     );
     fireEvent.click(
@@ -462,6 +518,135 @@ describe('App signed-in + cloud sync', () => {
     );
 
     await waitFor(() => expect(H.spy.approve.length).toBe(1));
-    expect(H.spy.approve[0][0]).toBe('tester');
+    expect(H.spy.approve[0][0]).toBe('espacio_u_uid_test');
+  });
+
+  it('keeps a returning user on its stored space (S8)', async () => {
+    localStorage.setItem('p_current_space_id', 'espacio_tester');
+    render(<App />);
+
+    expect(await screen.findByText('espacio_tester')).toBeInTheDocument();
+  });
+
+  it('joins directly when the backend reports the caller is already a member (C1)', async () => {
+    H.control.requestAccessResult = {
+      status: 'member',
+      spaceId: 'espacio_compartido',
+      spaceName: 'Compartido',
+    };
+    render(<App />);
+    await openSyncSettings();
+
+    fireEvent.change(
+      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
+      { target: { value: 'ESP-COMPARTI' } }
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /Solicitar Acceso al Espacio/i })
+    );
+
+    await waitFor(() =>
+      expect(screen.getAllByText('espacio_compartido').length).toBeGreaterThan(
+        0
+      )
+    );
+    expect(screen.queryByText('Solicitud Enviada')).toBeNull();
+  });
+
+  it('opens its own default space from the shortcut without asking the backend', async () => {
+    localStorage.setItem('p_current_space_id', 'espacio_compartido');
+    render(<App />);
+    await openSyncSettings();
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: /espacio_u_uid_test/ })
+    );
+
+    await waitFor(() =>
+      expect(localStorage.getItem('p_current_space_id')).toBe(
+        'espacio_u_uid_test'
+      )
+    );
+    expect(H.spy.requestAccess).toEqual([]);
+  });
+
+  it('cancels its own pending request without deciding it', async () => {
+    render(<App />);
+    await openSyncSettings();
+    fireEvent.change(
+      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
+      { target: { value: 'ESP-TARGET' } }
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /Solicitar Acceso al Espacio/i })
+    );
+    await screen.findByText('Solicitud Enviada');
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Cancelar Solicitud/i })
+    );
+
+    await waitFor(() =>
+      expect(H.spy.cancel).toEqual([['space_target', 'req_1']])
+    );
+  });
+
+  it('falls back to the personal space with a visible message when the stored space denies access (S9)', async () => {
+    localStorage.setItem('p_current_space_id', 'espacio_ajeno');
+    H.control.deniedSpaces = new Set(['espacio_ajeno']);
+    render(<App />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /No tienes acceso al espacio "espacio_ajeno"/
+    );
+    expect(await screen.findByText('espacio_u_uid_test')).toBeInTheDocument();
+    expect(localStorage.getItem('p_current_space_id')).toBe(
+      'espacio_u_uid_test'
+    );
+  });
+
+  it('switches to the personal space when the live space listener is denied after revocation (S9)', async () => {
+    localStorage.setItem('p_current_space_id', 'espacio_compartido');
+    render(<App />);
+    await openSyncSettings();
+    // The "Mi Espacio" shortcut shows once the default space is resolved.
+    expect(await screen.findByText('espacio_u_uid_test')).toBeInTheDocument();
+
+    act(() => {
+      H.spaceListeners
+        .get('spaces/espacio_compartido')!
+        .error?.(H.permissionDenied());
+    });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/revocado/);
+    await waitFor(() =>
+      expect(localStorage.getItem('p_current_space_id')).toBe(
+        'espacio_u_uid_test'
+      )
+    );
+  });
+
+  it('surfaces queued records dropped for lack of permission instead of reporting them synced (S9)', async () => {
+    localStorage.setItem(
+      'sync_queue_espacio_u_uid_test',
+      JSON.stringify([
+        {
+          id: 'exp_queued',
+          subcol: 'expenses',
+          action: 'save',
+          data: { id: 'exp_queued' },
+          timestamp: 1,
+        },
+      ])
+    );
+    H.control.saveError = H.permissionDenied();
+    render(<App />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /no tienes permiso/i
+    );
+    expect(
+      JSON.parse(localStorage.getItem('sync_queue_espacio_u_uid_test')!)
+    ).toEqual([]);
   });
 });
