@@ -1652,10 +1652,15 @@ export default function App() {
     }
 
     if (syncEnabled && currentSpaceId) {
-      if (tx.id.startsWith('tg_') || (tx.status as string) === 'TELEGRAM_DRAFT') {
-        deleteSpaceDocument(currentSpaceId, 'pending_transactions', tx.id).catch(
-          console.error
-        );
+      if (
+        tx.id.startsWith('tg_') ||
+        (tx.status as string) === 'TELEGRAM_DRAFT'
+      ) {
+        deleteSpaceDocument(
+          currentSpaceId,
+          'pending_transactions',
+          tx.id
+        ).catch(console.error);
         syncTelegramDraftAction(tx, 'APPROVED');
       } else {
         saveSpaceDocument(currentSpaceId, 'pending_transactions', tx.id, {
