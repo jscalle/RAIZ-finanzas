@@ -11,6 +11,9 @@ export interface SpaceDoc {
 export interface AccessRequestDoc {
   status?: unknown;
   requesterUid?: unknown;
+  // Contract C2: uid of whoever set the current approved/rejected status.
+  decidedBy?: unknown;
+  decidedAt?: unknown;
 }
 
 export interface TelegramLinkDoc {

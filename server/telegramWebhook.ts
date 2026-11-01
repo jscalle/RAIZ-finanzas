@@ -5,6 +5,9 @@
 export type TelegramWebhookSyncResult =
   'skipped-missing-config' | 'skipped-no-webhook' | 'updated' | 'failed';
 
+export type TelegramWebhookStartupResult =
+  TelegramWebhookSyncResult | 'skipped-not-cloud-run';
+
 type Logger = Pick<Console, 'log' | 'warn' | 'error'>;
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -108,4 +111,21 @@ export async function syncTelegramWebhookSecret(options: {
     );
     return 'failed';
   }
+}
+
+// Startup entry point: re-registers the webhook only on Cloud Run (where
+// K_SERVICE is set), so a local server sharing the bot token never re-points
+// the production webhook to a different secret.
+export async function syncTelegramWebhookOnStartup(
+  options: Parameters<typeof syncTelegramWebhookSecret>[0] & {
+    cloudRunService: string | undefined;
+  }
+): Promise<TelegramWebhookStartupResult> {
+  if (!options.cloudRunService) {
+    (options.logger ?? console).log(
+      '[telegram] K_SERVICE is not set (not running on Cloud Run); skipping the startup webhook re-registration.'
+    );
+    return 'skipped-not-cloud-run';
+  }
+  return syncTelegramWebhookSecret(options);
 }

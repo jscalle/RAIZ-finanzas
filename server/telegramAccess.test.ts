@@ -78,6 +78,7 @@ describe('Telegram access flow (S1 server side)', () => {
       status: 'approved',
       currentMembers: [OWNER],
       spaceName: 'Familia',
+      decidedBy: OWNER,
     });
 
     expect(store.get(`spaces/${SPACE_ID}`)?.members).toEqual([
@@ -109,6 +110,7 @@ describe('Telegram access flow (S1 server side)', () => {
       chatId: CHAT_ID,
       status: 'revoked',
       currentMembers: [OWNER, `tg:${CHAT_ID}`],
+      decidedBy: OWNER,
     });
 
     expect(store.get(`spaces/${SPACE_ID}`)?.members).toEqual([OWNER]);
@@ -118,12 +120,23 @@ describe('Telegram access flow (S1 server side)', () => {
   });
 });
 
+function approvedTelegramRequestState(decision: Data): Record<string, Data> {
+  const state = pendingTelegramRequestState();
+  Object.assign(state[`spaces/${SPACE_ID}/access_requests/req_tg_${CHAT_ID}`], {
+    status: 'approved',
+    ...decision,
+  });
+  return state;
+}
+
 describe('resolveTelegramChatSpace (existing Telegram behavior)', () => {
-  it('resolves a linked chat with an approved request to its space', async () => {
-    const state = pendingTelegramRequestState();
-    state[`spaces/${SPACE_ID}/access_requests/req_tg_${CHAT_ID}`].status =
-      'approved';
-    const { db, store } = createFakeDb(state);
+  it('resolves a linked chat with an owner-approved request to its space', async () => {
+    const { db, store } = createFakeDb(
+      approvedTelegramRequestState({
+        decidedBy: OWNER,
+        decidedAt: '2026-11-01T00:00:00.000Z',
+      })
+    );
 
     await expect(resolveTelegramChatSpace(db, CHAT_ID)).resolves.toEqual({
       status: 'approved',
@@ -149,5 +162,65 @@ describe('resolveTelegramChatSpace (existing Telegram behavior)', () => {
     await expect(resolveTelegramChatSpace(db, '999')).resolves.toEqual({
       status: 'unlinked',
     });
+  });
+});
+
+describe('owner-only Telegram approvals (S10 / contract C2)', () => {
+  it('records who decided and when on the access request', async () => {
+    const { db, store } = createFakeDb(pendingTelegramRequestState());
+
+    await applyTelegramAccessChange(db, {
+      spaceId: SPACE_ID,
+      chatId: CHAT_ID,
+      status: 'rejected',
+      currentMembers: [OWNER],
+      decidedBy: OWNER,
+    });
+
+    const request = store.get(
+      `spaces/${SPACE_ID}/access_requests/req_tg_${CHAT_ID}`
+    );
+    expect(request).toMatchObject({ status: 'rejected', decidedBy: OWNER });
+    expect(typeof request?.decidedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(String(request?.decidedAt)))).toBe(false);
+  });
+
+  it('does not grant a request approved by someone other than the owner', async () => {
+    const { db, store } = createFakeDb(
+      approvedTelegramRequestState({ decidedBy: 'other-member-uid' })
+    );
+
+    await expect(resolveTelegramChatSpace(db, CHAT_ID)).resolves.toMatchObject({
+      status: 'rejected',
+      spaceId: SPACE_ID,
+    });
+    expect(store.get(`spaces/${SPACE_ID}`)?.members).toEqual([OWNER]);
+    expect(store.get(`telegram_links/${CHAT_ID}`)?.status).toBe('pending');
+  });
+
+  it('does not grant an approved request without decidedBy', async () => {
+    const { db, store } = createFakeDb(approvedTelegramRequestState({}));
+
+    await expect(resolveTelegramChatSpace(db, CHAT_ID)).resolves.toMatchObject({
+      status: 'rejected',
+    });
+    expect(store.get(`spaces/${SPACE_ID}`)?.members).toEqual([OWNER]);
+  });
+
+  it('still treats a chat that is already a tg: member as linked', async () => {
+    // Legacy approval without decidedBy, chat already in members.
+    const legacy = approvedTelegramRequestState({});
+    legacy[`spaces/${SPACE_ID}`].members = [OWNER, `tg:${CHAT_ID}`];
+    await expect(
+      resolveTelegramChatSpace(createFakeDb(legacy).db, CHAT_ID)
+    ).resolves.toMatchObject({ status: 'approved', spaceId: SPACE_ID });
+
+    // Member with no access request document at all.
+    const noRequest = pendingTelegramRequestState();
+    delete noRequest[`spaces/${SPACE_ID}/access_requests/req_tg_${CHAT_ID}`];
+    noRequest[`spaces/${SPACE_ID}`].members = [OWNER, `tg:${CHAT_ID}`];
+    await expect(
+      resolveTelegramChatSpace(createFakeDb(noRequest).db, CHAT_ID)
+    ).resolves.toMatchObject({ status: 'approved', spaceId: SPACE_ID });
   });
 });

@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest';
-import { syncTelegramWebhookSecret } from './telegramWebhook';
+import {
+  syncTelegramWebhookOnStartup,
+  syncTelegramWebhookSecret,
+} from './telegramWebhook';
 
 const BOT_TOKEN = '000000000:TEST_BOT_TOKEN_VALUE';
 const SECRET = 'TEST_WEBHOOK_SECRET_VALUE';
@@ -118,5 +121,50 @@ describe('syncTelegramWebhookSecret (S2 startup re-registration)', () => {
     expect(logged).not.toContain(BOT_TOKEN);
     expect(logged).not.toContain(SECRET);
     expect(logged).toContain('[telegram]');
+  });
+});
+
+describe('syncTelegramWebhookOnStartup (S10 Cloud Run only)', () => {
+  it('skips the re-registration and says so when K_SERVICE is not set', async () => {
+    const { fetchImpl } = fakeTelegram({ url: WEBHOOK_URL });
+    const logger = fakeLogger();
+
+    const result = await syncTelegramWebhookOnStartup({
+      cloudRunService: undefined,
+      botToken: BOT_TOKEN,
+      secret: SECRET,
+      fetchImpl,
+      logger,
+    });
+
+    expect(result).toBe('skipped-not-cloud-run');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const logged = everythingLogged(logger);
+    expect(logged).toContain('K_SERVICE');
+    expect(logged).toContain('skipping');
+    expect(logged).not.toContain(BOT_TOKEN);
+    expect(logged).not.toContain(SECRET);
+  });
+
+  it('re-registers the webhook with the secret when running on Cloud Run', async () => {
+    const { calls, fetchImpl } = fakeTelegram({ url: WEBHOOK_URL });
+
+    const result = await syncTelegramWebhookOnStartup({
+      cloudRunService: 'raiz-finanzas-api',
+      botToken: BOT_TOKEN,
+      secret: SECRET,
+      fetchImpl,
+      logger: fakeLogger(),
+    });
+
+    expect(result).toBe('updated');
+    expect(calls.map((c) => c.method)).toEqual([
+      'getWebhookInfo',
+      'setWebhook',
+    ]);
+    expect(calls[1].body).toMatchObject({
+      url: WEBHOOK_URL,
+      secret_token: SECRET,
+    });
   });
 });

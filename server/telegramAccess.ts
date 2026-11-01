@@ -35,8 +35,8 @@ export async function loadTelegramAccessContext(
 }
 
 // Persists an owner decision that decideTelegramAccessChange already allowed:
-// updates the space members, the `req_tg_<chatId>` request status and the
-// chat's `telegram_links` entry.
+// updates the space members, the `req_tg_<chatId>` request status (with
+// `decidedBy`/`decidedAt`, contract C2) and the chat's `telegram_links` entry.
 export async function applyTelegramAccessChange(
   adminDb: Firestore,
   change: {
@@ -44,11 +44,13 @@ export async function applyTelegramAccessChange(
     chatId: string;
     status: TelegramAccessStatus;
     currentMembers: unknown;
+    // uid of the verified space owner who made the decision.
+    decidedBy: string;
     spaceName?: string;
     spaceCode?: string;
   }
 ): Promise<void> {
-  const { spaceId, chatId, status, spaceName, spaceCode } = change;
+  const { spaceId, chatId, status, decidedBy, spaceName, spaceCode } = change;
   const tgMemberUid = `tg:${chatId}`;
   const approved = status === 'approved';
   const spaceRef = adminDb.collection('spaces').doc(spaceId);
@@ -66,7 +68,14 @@ export async function applyTelegramAccessChange(
   await spaceRef
     .collection('access_requests')
     .doc(`req_tg_${chatId}`)
-    .set({ status: approved ? 'approved' : 'rejected' }, { merge: true });
+    .set(
+      {
+        status: approved ? 'approved' : 'rejected',
+        decidedBy,
+        decidedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
 
   await adminDb
     .collection('telegram_links')
@@ -81,6 +90,19 @@ export async function applyTelegramAccessChange(
       },
       { merge: true }
     );
+}
+
+function isApprovedBySpaceOwner(
+  space: SpaceDoc,
+  request: AccessRequestDoc | null
+): boolean {
+  return Boolean(
+    request &&
+    request.status === 'approved' &&
+    typeof space.ownerUid === 'string' &&
+    space.ownerUid.length > 0 &&
+    request.decidedBy === space.ownerUid
+  );
 }
 
 export async function resolveTelegramChatSpace(
@@ -132,8 +154,12 @@ export async function resolveTelegramChatSpace(
     const reqData: any = reqSnap.exists ? reqSnap.data() : null;
 
     const isMember = members.includes(tgMemberUid);
-    const isReqApproved =
-      reqData?.status === 'approved' || (isMember && !reqData);
+    // A chat that is already a `tg:` member stays linked (unchanged). A chat
+    // that is not a member yet is granted only when the space owner approved
+    // the request (contract C2: `decidedBy` equals `ownerUid`).
+    const isReqApproved = isMember
+      ? reqData?.status === 'approved' || !reqData
+      : isApprovedBySpaceOwner(spaceData, reqData);
 
     if (isReqApproved) {
       const updates: Promise<any>[] = [];

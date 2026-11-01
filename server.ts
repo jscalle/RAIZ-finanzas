@@ -10,8 +10,15 @@ import {
 } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
-import { initializeApp as initClientApp } from "firebase/app";
-import { getFirestore as getClientFirestore, doc, setDoc } from "firebase/firestore";
+import type { DecodedIdToken } from "firebase-admin/auth";
+import {
+  createFirebaseProjectGuard,
+  resolveFirebaseProjectId,
+} from "./server/firebaseProject";
+import {
+  findSpaceByCodeOrId,
+  requestSpaceAccess,
+} from "./server/spaceAccess";
 import {
   canSyncTelegramDraft,
   createTelegramWebhookGuard,
@@ -25,34 +32,23 @@ import {
   loadTelegramAccessContext,
   resolveTelegramChatSpace as resolveTelegramChatSpaceInDb,
 } from "./server/telegramAccess";
-import { syncTelegramWebhookSecret } from "./server/telegramWebhook";
+import { syncTelegramWebhookOnStartup } from "./server/telegramWebhook";
 
 dotenv.config();
 
-const resolvedProjectId =
-  process.env.VITE_FIREBASE_PROJECT_ID ||
-  process.env.GOOGLE_CLOUD_PROJECT ||
-  "your-firebase-project-id";
-
-// Firebase Client initialized from environment variables
-const firebaseConfig = {
-  projectId: resolvedProjectId,
-  appId:
-    process.env.VITE_FIREBASE_APP_ID ||
-    "1:000000000000:web:0000000000000000000000",
-  apiKey: process.env.VITE_FIREBASE_API_KEY || "your-firebase-api-key",
-  authDomain:
-    process.env.VITE_FIREBASE_AUTH_DOMAIN ||
-    `${resolvedProjectId}.firebaseapp.com`,
-  storageBucket:
-    process.env.VITE_FIREBASE_STORAGE_BUCKET ||
-    `${resolvedProjectId}.firebasestorage.app`,
-  messagingSenderId:
-    process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "000000000000",
-};
-
-const clientApp = initClientApp(firebaseConfig);
-const clientDb = getClientFirestore(clientApp);
+// Firebase/GCP project id: GOOGLE_CLOUD_PROJECT, then FIREBASE_PROJECT_ID,
+// then VITE_FIREBASE_PROJECT_ID. A missing or placeholder id is reported once
+// here and Admin-backed endpoints answer 503 (firebaseProjectGuard).
+const firebaseProject = resolveFirebaseProjectId(process.env);
+const firebaseProjectId = firebaseProject.ok
+  ? firebaseProject.projectId
+  : undefined;
+if (!firebaseProject.ok) {
+  console.error(firebaseProject.error);
+}
+const firebaseProjectGuard = createFirebaseProjectGuard({
+  isConfigured: () => firebaseProject.ok,
+});
 
 // Lazy, one-time Firebase Admin initialization from environment.
 // Auth verification is OPT-IN: if no credentials are configured the endpoint
@@ -64,24 +60,26 @@ let authNotConfiguredWarned = false;
 function initFirebaseAdmin(): void {
   if (firebaseAdminInitialized) return;
   firebaseAdminInitialized = true;
+  // Never initialize Admin against a missing or placeholder project.
+  if (!firebaseProjectId) return;
   try {
     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       initializeAdminApp({
         credential: cert(serviceAccount),
-        projectId: resolvedProjectId,
+        projectId: firebaseProjectId,
       });
       firebaseAdminReady = true;
     } else {
       initializeAdminApp({
         credential: applicationDefault(),
-        projectId: resolvedProjectId,
+        projectId: firebaseProjectId,
       });
       firebaseAdminReady = true;
     }
   } catch (error) {
     try {
-      initializeAdminApp({ projectId: resolvedProjectId });
+      initializeAdminApp({ projectId: firebaseProjectId });
       firebaseAdminReady = true;
     } catch (e) {
       console.warn(
@@ -96,11 +94,11 @@ function initFirebaseAdmin(): void {
 initFirebaseAdmin();
 
 // Verify the `Authorization: Bearer <Firebase ID token>` header and return the
-// caller's uid. Sends 401 and returns null when the token is missing or invalid.
-async function authenticateUid(
+// decoded token. Sends 401 and returns null when it is missing or invalid.
+async function authenticateToken(
   req: express.Request,
   res: express.Response
-): Promise<string | null> {
+): Promise<DecodedIdToken | null> {
   const idToken = extractBearerToken(req.headers.authorization);
   if (!idToken) {
     res.status(401).json({ error: "Missing or invalid Authorization token." });
@@ -108,13 +106,19 @@ async function authenticateUid(
   }
 
   try {
-    const decoded = await getAdminAuth().verifyIdToken(idToken);
-    return decoded.uid;
+    return await getAdminAuth().verifyIdToken(idToken);
   } catch (error) {
     console.warn("[auth] ID token verification failed:", error);
     res.status(401).json({ error: "Missing or invalid Authorization token." });
     return null;
   }
+}
+
+async function authenticateUid(
+  req: express.Request,
+  res: express.Response
+): Promise<string | null> {
+  return (await authenticateToken(req, res))?.uid ?? null;
 }
 
 // Verify the caller's Firebase ID token when auth is configured.
@@ -139,17 +143,25 @@ async function verifyAuth(
 
 // Fail-closed variant for endpoints that act on a specific space or chat:
 // without Firebase Admin the caller cannot be identified, so refuse (503).
-async function requireUid(
+// Returns the verified token (uid, email, name).
+async function requireIdToken(
   req: express.Request,
   res: express.Response
-): Promise<string | null> {
+): Promise<DecodedIdToken | null> {
   if (!firebaseAdminReady) {
     res
       .status(503)
       .json({ error: "Authentication is not configured on this server." });
     return null;
   }
-  return authenticateUid(req, res);
+  return authenticateToken(req, res);
+}
+
+async function requireUid(
+  req: express.Request,
+  res: express.Response
+): Promise<string | null> {
+  return (await requireIdToken(req, res))?.uid ?? null;
 }
 
 // Lazy initialize Gemini AI client
@@ -162,7 +174,7 @@ function getGeminiClient(): GoogleGenAI {
     } else {
       aiClient = new GoogleGenAI({
         vertexai: true,
-        project: resolvedProjectId,
+        project: firebaseProjectId,
         location: process.env.VERTEX_AI_LOCATION || "global",
       });
     }
@@ -247,7 +259,7 @@ async function startServer() {
   });
 
   // API Route: AI Parser for transactions, SMS, emails, or manual commands
-  app.post("/api/parse-movement", async (req, res) => {
+  app.post("/api/parse-movement", firebaseProjectGuard, async (req, res) => {
     if (!rateLimit(req, res)) return;
     if (!(await verifyAuth(req, res))) return;
     try {
@@ -359,275 +371,6 @@ async function startServer() {
     }
   });
 
-  // API Route: iOS Shortcuts Webhook for Colombian SMS/Bank Alerts
-  app.post("/api/webhook/transacciones", async (req, res) => {
-    if (!rateLimit(req, res)) return;
-
-    // Check authorization: validate Bearer token if WEBHOOK_SECRET_TOKEN is configured
-    const secretToken = process.env.WEBHOOK_SECRET_TOKEN;
-    if (secretToken) {
-      const header = req.headers.authorization || "";
-      const match = header.match(/^Bearer (.+)$/);
-      if (!match || match[1] !== secretToken) {
-        res.status(401).json({ error: "Unauthorized: Invalid or missing token." });
-        return;
-      }
-    }
-
-    const normalizedSpaceId = req.body.spaceId || req.query.spaceId || process.env.DEFAULT_SPACE_ID || "espacio_compartido";
-    let safeText = "";
-    let parsedData: any = null;
-
-    try {
-      const imageBase64 = req.body.image || null;
-      let rawText = req.body.texto_notificacion || req.body.text || req.body.message;
-      
-      // If no text keys found, and no image found, fallback to stringifying the whole body just in case
-      if (!rawText && !imageBase64 && Object.keys(req.body).length > 0) {
-        rawText = JSON.stringify(req.body);
-      }
-      
-      let payloadText = "";
-      if (typeof rawText === "string") {
-        payloadText = rawText;
-      } else if (rawText) {
-        payloadText = JSON.stringify(rawText);
-      }
-
-      if ((!payloadText || payloadText === "{}" || payloadText === "[]") && !imageBase64) {
-        res.status(400).json({ error: "Bad Request: Missing text or image in payload." });
-        return;
-      }
-
-      const MAX_TEXT_LENGTH = 2000;
-      safeText = payloadText.slice(0, MAX_TEXT_LENGTH);
-
-      const ai = getGeminiClient();
-      
-      const promptText = `Actúa como un asistente financiero experto. Analiza la siguiente información que puede ser un texto natural, un SMS bancario o una imagen de un recibo/comprobante.
-Extrae los detalles de la transacción de forma estructurada.
-
-<transaction_text>
-${safeText}
-</transaction_text>
-
-Instrucciones:
-1. Determina el tipo de transacción ("EXPENSE", "INCOME", "TRANSFER", "DEBT_PAYMENT", "UNCATEGORIZED"). Si dice "gasté", "compré", "pagó", es EXPENSE.
-2. Extrae el monto numérico (amount).
-3. Extrae la moneda o símbolo (currency), ej: COP, $.
-4. Genera una descripción corta (description).
-5. Asigna una categoría (category) sugerida (ej. Comida, Transporte, Servicios, Entretenimiento, Ahorros, Salud, Educación, Deudas, Vivienda, Otros).
-6. Extrae la fecha (date) si está presente, en formato YYYY-MM-DD.
-7. Determina el método de pago (paymentMethod) si se menciona (ej. TC, Credito, Debito, Efectivo, Ahorros, Nequi, etc.). Si se menciona "TC" o "Tarjeta de crédito", pon "CREDITO". Si dice "Efectivo", pon "EFECTIVO". Si no hay, pon "".
-8. Proporciona una explicación corta en español de 1 oración (explanation) de lo que hiciste.`;
-
-      const contents = [];
-      if (imageBase64) {
-        let cleanBase64 = typeof imageBase64 === 'string' ? imageBase64.replace(/\s+/g, '') : imageBase64;
-        let mimeType = "image/jpeg";
-        
-        // Strip data URI scheme if present and extract mime type
-        if (typeof cleanBase64 === "string" && cleanBase64.startsWith("data:")) {
-          const matches = cleanBase64.match(/^data:(.+);base64,(.+)$/);
-          if (matches && matches.length === 3) {
-            mimeType = matches[1];
-            cleanBase64 = matches[2];
-          }
-        } else if (typeof cleanBase64 === "string") {
-          // Auto-detect based on base64 magic bytes
-          if (cleanBase64.startsWith("/9j/")) {
-            mimeType = "image/jpeg";
-          } else if (cleanBase64.startsWith("iVBORw")) {
-            mimeType = "image/png";
-          } else if (cleanBase64.startsWith("UklGR")) {
-            mimeType = "image/webp";
-          } else if (cleanBase64.startsWith("PHN2Zy")) {
-            mimeType = "image/svg+xml";
-          } else {
-            // Defaulting to jpeg, but might fail if it's HEIC or HEIF
-            mimeType = "image/jpeg";
-          }
-        }
-
-        contents.push({
-          inlineData: {
-            data: cleanBase64,
-            mimeType: mimeType,
-          },
-        });
-      }
-      contents.push(promptText);
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: contents,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: {
-                type: Type.STRING,
-                description: "Tipo de transacción: EXPENSE, INCOME, TRANSFER, DEBT_PAYMENT, UNCATEGORIZED",
-              },
-              amount: {
-                type: Type.NUMBER,
-                description: "Monto numérico extraído.",
-              },
-              currency: {
-                type: Type.STRING,
-                description: "Símbolo de la moneda.",
-              },
-              description: {
-                type: Type.STRING,
-                description: "Descripción breve.",
-              },
-              category: {
-                type: Type.STRING,
-                description: "Categoría sugerida.",
-              },
-              date: {
-                type: Type.STRING,
-                description: "Fecha de la transacción.",
-              },
-              paymentMethod: {
-                type: Type.STRING,
-                description: "Método de pago deducido (CREDITO, DEBITO, EFECTIVO, u otro).",
-              },
-              explanation: {
-                type: Type.STRING,
-                description: "Explicación breve en español.",
-              },
-            },
-            required: ["type", "amount", "currency", "description", "category", "explanation"],
-          },
-        },
-      });
-
-      const resultText = response.text?.trim() || "{}";
-      parsedData = JSON.parse(resultText);
-
-    } catch (error: any) {
-      console.error("Error processing webhook with Gemini AI, applying smart regex fallback:", error);
-      
-      // Fallback regex parser for Colombian SMS bank alerts (Bancolombia, Nequi, Davivienda, etc.)
-      const isIncome = /recibiste|abono|consignac|ingreso|deposito/i.test(safeText);
-      const isExpense = /compraste|pago|debito|retiro|transferiste/i.test(safeText);
-      const type = isIncome ? "INCOME" : (isExpense ? "EXPENSE" : "UNCATEGORIZED");
-
-      // Extract amount (e.g. COP48.315,00 or $48.315 or 48.315)
-      const amountMatch = safeText.match(/(?:COP|\$)?\s*([\d\.,]+)/i);
-      let amount = 0;
-      if (amountMatch) {
-        const rawNum = amountMatch[1].replace(/\./g, '').replace(',', '.');
-        amount = parseFloat(rawNum) || 0;
-      }
-
-      // Extract merchant / description (e.g. "en INVERSIONES DAYAMO")
-      const merchantMatch = safeText.match(/en\s+([A-Z0-9\s_\-\.\*]{3,30})/i);
-      const description = merchantMatch ? merchantMatch[1].trim() : "Transacción Bancaria";
-
-      // Extract date (e.g. 21/08/2026)
-      const dateMatch = safeText.match(/(\d{2}\/\d{2}\/\d{4})/);
-      const date = dateMatch ? dateMatch[1] : new Date().toISOString().split('T')[0];
-
-      parsedData = {
-        type,
-        amount,
-        currency: "COP",
-        description,
-        category: isIncome ? "Ingresos" : "Otros",
-        date,
-        explanation: `Notificación procesada vía reconocedor de SMS (${type === 'EXPENSE' ? 'Gasto' : 'Ingreso'} de $${amount.toLocaleString('es-CO')} en ${description}).`
-      };
-    }
-
-    if (parsedData) {
-      if (req.body.action === 'parse') {
-        res.json({ success: true, data: parsedData });
-        return;
-      }
-      
-      if (req.body.action === 'save_direct') {
-        const id = `${parsedData.type === 'INCOME' ? 'inc_' : 'exp_'}${Date.now()}`;
-        const item: Record<string, any> = {
-          id,
-          description: parsedData.description || 'Transacción SMS',
-          amount: parsedData.amount || 0,
-          topicId: parsedData.topicId || 'general',
-          date: normalizeDateToISO(parsedData.date),
-          confirmed: true,
-          verificationSource: 'SMS_PUSH',
-          reconciliationStatus: 'PENDING',
-        };
-        
-        if (parsedData.type === 'INCOME') {
-          item.method = parsedData.paymentMethod || 'DIGITAL';
-        } else {
-          item.source = parsedData.source || 'INGRESOS';
-          item.paymentMethod = parsedData.paymentMethod || 'DEBITO';
-        }
-
-        const colName = parsedData.type === 'INCOME' ? 'incomes' : 'expenses';
-        try {
-          // Resolve topicId from category string if topicId is missing
-          if (!parsedData.topicId && parsedData.category) {
-            const { collection, getDocs } = await import('firebase/firestore');
-            const topicsSnap = await getDocs(collection(clientDb, 'spaces', normalizedSpaceId, 'topics'));
-            let matchedTopicId = null;
-            topicsSnap.forEach(tDoc => {
-              if (tDoc.data().name?.toLowerCase() === parsedData.category.toLowerCase()) {
-                matchedTopicId = tDoc.id;
-              }
-            });
-            if (matchedTopicId) item.topicId = matchedTopicId;
-          }
-
-          await setDoc(doc(clientDb, 'spaces', normalizedSpaceId, colName, id), item);
-          res.json({ success: true, data: item, id });
-          return;
-        } catch (err) {
-          console.error("[webhook] Failed to save direct transaction:", err);
-          res.status(500).json({ error: "Failed to save direct transaction" });
-          return;
-        }
-      }
-
-      const pendingDocId = `pending_${Date.now()}`;
-      const pendingItem = {
-        id: pendingDocId,
-        spaceId: normalizedSpaceId,
-        type: parsedData.type || 'EXPENSE',
-        amount: parsedData.amount || 0,
-        currency: parsedData.currency || 'COP',
-        description: parsedData.description || 'Transacción SMS',
-        category: parsedData.category || 'Otros',
-        date: normalizeDateToISO(parsedData.date),
-        explanation: parsedData.explanation || '',
-        status: 'PENDING',
-        source: 'SMS_WEBHOOK',
-        createdAt: new Date().toISOString(),
-        rawText: safeText,
-        paymentMethod: parsedData.paymentMethod || '',
-      };
-
-      try {
-        await setDoc(doc(clientDb, 'spaces', normalizedSpaceId, 'pending_transactions', pendingDocId), pendingItem);
-        console.log(`[webhook] Successfully saved pending transaction ${pendingDocId} to /spaces/${normalizedSpaceId}/pending_transactions`);
-      } catch (err) {
-        console.error("[webhook] Failed to save pending transaction to Firestore:", err);
-      }
-
-      res.json({
-        success: true,
-        pendingId: pendingDocId,
-        data: pendingItem,
-      });
-    } else {
-       res.status(500).json({ error: "Failed to parse webhook payload." });
-    }
-  });
-
   // --- Telegram Bot Interactive Assistant ---
   import("dns").then((dns) => {
     if (dns.setDefaultResultOrder) {
@@ -645,7 +388,7 @@ Instrucciones:
     if (webhookSecretMissingReported) return;
     webhookSecretMissingReported = true;
     console.error(
-      "[telegram] TELEGRAM_WEBHOOK_SECRET is not set: every Telegram webhook update is rejected with 401. Set it on the service; on the next start the registered webhook is updated with it."
+      "[telegram] TELEGRAM_WEBHOOK_SECRET is not set: every Telegram webhook update is rejected with 401. Set it on the service; on the next Cloud Run start the registered webhook is updated with it."
     );
   };
   const telegramWebhookGuard = createTelegramWebhookGuard({
@@ -1179,39 +922,10 @@ Instrucciones:
     };
   }
 
+  // Space lookup by code or id, shared with POST /api/spaces/request-access
+  // (server/spaceAccess.ts).
   async function findSpaceByCodeOrIdAdmin(rawCodeOrId: string): Promise<any | null> {
-    if (!rawCodeOrId) return null;
-    const cleaned = rawCodeOrId.trim();
-    const adminDb = getAdminFirestore();
-
-    try {
-      const byCode = await adminDb
-        .collection("spaces")
-        .where("code", "==", cleaned.toUpperCase())
-        .limit(1)
-        .get();
-      if (!byCode.empty) {
-        const docSnap = byCode.docs[0];
-        return { id: docSnap.id, ...docSnap.data() };
-      }
-    } catch (e) {
-      console.warn("[telegram] Error querying space by code:", e);
-    }
-
-    const normalized = cleaned.toLowerCase().startsWith("espacio_")
-      ? cleaned.toLowerCase().replace(/[^a-z0-9_]/g, "")
-      : `espacio_${cleaned.toLowerCase().replace(/[^a-z0-9_]/g, "")}`;
-
-    try {
-      const docSnap = await adminDb.collection("spaces").doc(normalized).get();
-      if (docSnap.exists) {
-        return { id: docSnap.id, ...docSnap.data() };
-      }
-    } catch (e) {
-      console.warn("[telegram] Error getting space by ID:", e);
-    }
-
-    return null;
+    return findSpaceByCodeOrId(getAdminFirestore(), rawCodeOrId);
   }
 
   // Resolves which space an incoming Telegram chat belongs to (see
@@ -1222,7 +936,7 @@ Instrucciones:
   // API Route: Notify Telegram user when Space Owner Approves, Rejects or Revokes access from the Web App.
   // Requires the space owner's Firebase ID token and an access request from
   // that chat (rules in decideTelegramAccessChange, server/security.ts).
-  app.post("/api/telegram/notify-access", async (req, res) => {
+  app.post("/api/telegram/notify-access", firebaseProjectGuard, async (req, res) => {
     const callerUid = await requireUid(req, res);
     if (!callerUid) return;
     try {
@@ -1254,6 +968,8 @@ Instrucciones:
         chatId: cleanChatId,
         status: decision.status,
         currentMembers: context.space?.members,
+        // Contract C2: the verified owner is recorded as the decider.
+        decidedBy: callerUid,
         spaceName,
         spaceCode,
       });
@@ -1287,7 +1003,7 @@ Instrucciones:
   // API Route: Sync Telegram draft card when approved or discarded from the Web App.
   // Requires the Firebase ID token of a member of the space the chat is linked
   // to (telegram_links/<chatId>.spaceId).
-  app.post("/api/telegram/sync-draft", async (req, res) => {
+  app.post("/api/telegram/sync-draft", firebaseProjectGuard, async (req, res) => {
     const callerUid = await requireUid(req, res);
     if (!callerUid) return;
     try {
@@ -1339,9 +1055,26 @@ Instrucciones:
     }
   });
 
+  // API Route: ask to join a space by its code or id (contract C1). The caller
+  // is identified by the verified ID token; only `code` is read from the body.
+  app.post("/api/spaces/request-access", firebaseProjectGuard, async (req, res) => {
+    const caller = await requireIdToken(req, res);
+    if (!caller) return;
+    try {
+      const result = await requestSpaceAccess(getAdminFirestore(), {
+        caller,
+        body: req.body,
+      });
+      res.status(result.httpStatus).json(result.body);
+    } catch (err) {
+      console.error("[spaces] Error in /api/spaces/request-access:", err);
+      res.status(500).json({ error: "request_access_failed" });
+    }
+  });
+
   // Telegram Bot API webhook. telegramWebhookGuard rejects (401) any update
   // without the X-Telegram-Bot-Api-Secret-Token matching TELEGRAM_WEBHOOK_SECRET.
-  app.post("/api/webhook/telegram", telegramWebhookGuard, async (req, res) => {
+  app.post("/api/webhook/telegram", telegramWebhookGuard, firebaseProjectGuard, async (req, res) => {
     if (!telegramToken) {
       console.warn("[telegram] TELEGRAM_BOT_TOKEN not configured.");
       res.sendStatus(200);
@@ -2257,10 +1990,12 @@ Mensaje de texto adicional del usuario: "${text ? text.slice(0, 2000) : "(Nota d
 
   // Keep the registered Telegram webhook in sync with TELEGRAM_WEBHOOK_SECRET
   // (same URL and allowed_updates) so a new secret needs no manual setWebhook.
+  // Only on Cloud Run (K_SERVICE set); skipped and logged everywhere else.
   if (telegramToken && !process.env.TELEGRAM_WEBHOOK_SECRET) {
     reportMissingWebhookSecret();
   }
-  void syncTelegramWebhookSecret({
+  void syncTelegramWebhookOnStartup({
+    cloudRunService: process.env.K_SERVICE,
     botToken: telegramToken,
     secret: process.env.TELEGRAM_WEBHOOK_SECRET,
   });
