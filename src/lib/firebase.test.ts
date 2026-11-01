@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  getDocsFromServer,
   onSnapshot,
   setDoc,
   updateDoc,
@@ -100,6 +101,7 @@ vi.mock('firebase/firestore', () => ({
   query: vi.fn(),
   where: vi.fn(),
   getDocs: vi.fn(),
+  getDocsFromServer: vi.fn(),
   arrayUnion: vi.fn(),
   arrayRemove: vi.fn(),
   writeBatch: vi.fn(),
@@ -490,7 +492,10 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
       vi.mocked(getDoc).mockResolvedValue({
         exists: () => false,
       } as never);
-      vi.mocked(getDocs).mockResolvedValue({ empty: true, docs: [] } as never);
+      vi.mocked(getDocsFromServer).mockResolvedValue({
+        empty: true,
+        docs: [],
+      } as never);
 
       const id = await firebase.resolveDefaultSpaceId({
         uid: ME,
@@ -515,12 +520,12 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
       await expect(
         firebase.resolveDefaultSpaceId({ uid: ME, email: 'ana@example.com' })
       ).resolves.toBe('espacio_ana');
-      expect(getDocs).not.toHaveBeenCalled();
+      expect(getDocsFromServer).not.toHaveBeenCalled();
     });
 
     it('keeps an existing owner on its legacy email-based space', async () => {
       vi.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
-      vi.mocked(getDocs).mockResolvedValue({
+      vi.mocked(getDocsFromServer).mockResolvedValue({
         empty: false,
         docs: [{ id: 'espacio_viaje' }, { id: 'espacio_ana' }],
       } as never);
@@ -537,7 +542,7 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
 
     it('fails instead of guessing when the owned-space lookup fails', async () => {
       vi.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
-      vi.mocked(getDocs).mockRejectedValue(
+      vi.mocked(getDocsFromServer).mockRejectedValue(
         Object.assign(new Error('offline'), { code: 'unavailable' })
       );
 
@@ -545,6 +550,33 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
         firebase.resolveDefaultSpaceId({ uid: ME, email: 'ana@example.com' })
       ).rejects.toThrow();
       expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('rejects without remembering anything when the remembered-space read fails offline', async () => {
+      vi.mocked(getDoc).mockRejectedValue(
+        Object.assign(new Error('offline'), { code: 'unavailable' })
+      );
+
+      await expect(
+        firebase.resolveDefaultSpaceId({ uid: ME, email: 'ana@example.com' })
+      ).rejects.toThrow();
+      expect(getDocsFromServer).not.toHaveBeenCalled();
+      expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('looks up owned spaces on the server, never in the local cache', async () => {
+      vi.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
+      // The cache would be empty offline; only the server knows the legacy space.
+      vi.mocked(getDocs).mockResolvedValue({ empty: true, docs: [] } as never);
+      vi.mocked(getDocsFromServer).mockResolvedValue({
+        empty: false,
+        docs: [{ id: 'espacio_ana' }],
+      } as never);
+
+      await expect(
+        firebase.resolveDefaultSpaceId({ uid: ME, email: 'ana@example.com' })
+      ).resolves.toBe('espacio_ana');
+      expect(getDocs).not.toHaveBeenCalled();
     });
   });
 

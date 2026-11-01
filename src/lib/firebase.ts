@@ -28,6 +28,7 @@ import {
   query,
   where,
   getDocs,
+  getDocsFromServer,
   arrayUnion,
   arrayRemove,
   writeBatch,
@@ -410,19 +411,19 @@ export const resolveDefaultSpaceId = async (user: {
   email?: string | null;
 }): Promise<string> => {
   const userRef = doc(db, 'users', user.uid);
-  try {
-    const userSnap = await getDoc(userRef);
-    const remembered = userSnap.exists()
-      ? (userSnap.data() as { defaultSpaceId?: unknown }).defaultSpaceId
-      : undefined;
-    if (typeof remembered === 'string' && remembered) {
-      return normalizeSpaceId(remembered);
-    }
-  } catch (e) {
-    console.warn('Could not read the remembered default space:', e);
+  // A failed read (e.g. offline) must not be mistaken for "nothing remembered":
+  // that would persist a new empty default space over the user's real one.
+  const userSnap = await getDoc(userRef);
+  const remembered = userSnap.exists()
+    ? (userSnap.data() as { defaultSpaceId?: unknown }).defaultSpaceId
+    : undefined;
+  if (typeof remembered === 'string' && remembered) {
+    return normalizeSpaceId(remembered);
   }
 
-  const owned = await getDocs(
+  // Server-only: offline, the cache answers with an empty result instead of
+  // failing, which would look like "owns no space".
+  const owned = await getDocsFromServer(
     query(collection(db, 'spaces'), where('ownerUid', '==', user.uid))
   );
   const ownedIds = owned.docs.map((d) => d.id).sort();
