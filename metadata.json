@@ -1,5 +1,5 @@
 {
-  "name": "Presupuesto Dinámico",
+  "name": "RAÍZ Finanzas",
   "description": "Gestor de finanzas personales simplificado y funcional para controlar ingresos, gastos, ahorros y metas con cruce de capital disponible.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

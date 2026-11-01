@@ -739,7 +739,7 @@ Instrucciones:
       const phoneNumberId = change?.metadata?.phone_number_id;
 
       if (whatsappToken && phoneNumberId && fromPhone) {
-        const replyText = `✅ *Movimiento capturado por FinPersonal*\n\n` +
+        const replyText = `✅ *Movimiento capturado por RAÍZ*\n\n` +
           `• *Tipo*: ${parsedData.type === "EXPENSE" ? "Gasto" : parsedData.type}\n` +
           `• *Monto*: $${(parsedData.amount || 0).toLocaleString("es-CO")} ${parsedData.currency || "COP"}\n` +
           `• *Método*: ${parsedData.paymentMethod || "DÉBITO"}\n` +
@@ -1475,7 +1475,7 @@ Instrucciones:
           chat_id: cleanChatId,
           parse_mode: "Markdown",
           text:
-            `✅ *¡Acceso Aprobado en FinPersonal!*\n\n` +
+            `✅ *¡Acceso Aprobado en RAÍZ!*\n\n` +
             `El propietario del espacio *${spaceName || spaceId || "Compartido"}* ${spaceCode ? `(\`${spaceCode}\`) ` : ""}ha autorizado tu cuenta de Telegram (*ID: ${cleanChatId}*).\n\n` +
             `🎙️📸💬 Ya puedes enviarme notas de voz, fotos de comprobantes, gastos o preguntas sobre el presupuesto compartido.`,
         });
@@ -1870,7 +1870,7 @@ Instrucciones:
           await tgSend("editMessageText", {
             chat_id: chatId,
             message_id: messageId,
-            text: `✅ *¡Guardado e Ingresado en FinPersonal!* ⚡\n\n` +
+            text: `✅ *¡Guardado e Ingresado en RAÍZ!* ⚡\n\n` +
               `• *Tipo*: ${isIncome ? "🟢 Ingreso" : "🔴 Gasto"}\n` +
               `• *Descripción*: ${finalDoc.description}\n` +
               `• *Monto*: *$${finalDoc.amount.toLocaleString("es-CO")}* COP\n` +
@@ -1909,7 +1909,7 @@ Instrucciones:
             chat_id: chatId,
             parse_mode: "Markdown",
             text:
-              `🔐 *Vincular tu Telegram a un Espacio de FinPersonal*\n\n` +
+              `🔐 *Vincular tu Telegram a un Espacio de RAÍZ*\n\n` +
               `• *Tu Telegram ID*: \`${chatId}\` (${tgFullName})\n\n` +
               `Para solicitar acceso a tu espacio en la nube, envía el comando seguido del *Código Privado de Acceso* (lo encuentras en la Web en *Nube y Compartir*):\n\n` +
               `👉 \`/conectar ESP-XXXXXX\`\n\n` +
