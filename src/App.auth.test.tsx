@@ -189,6 +189,7 @@ vi.mock('./lib/firebase', () => ({
     H.spy.approve.push([spaceId, req]);
   },
   rejectAccessRequest: async () => {},
+  syncTelegramDraftCard: async () => {},
   regenerateSpaceCode: async () => 'ESP-NEW000',
   removeSpaceMember: async () => {},
   // SpaceMembersList resolves member profiles for the active space.

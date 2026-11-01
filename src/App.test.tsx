@@ -72,6 +72,7 @@ vi.mock('./lib/firebase', () => ({
   subscribeToAccessRequestStatus: () => () => {},
   approveAccessRequest: async () => {},
   rejectAccessRequest: async () => {},
+  syncTelegramDraftCard: async () => {},
   regenerateSpaceCode: async () => 'ESP-NEW000',
   readStoredToken: () => null,
   writeStoredToken: () => {},

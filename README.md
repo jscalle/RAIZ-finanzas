@@ -102,6 +102,9 @@ VERTEX_AI_LOCATION="global"
 
 # --- 3. Bot de Telegram (Opcional para el Asistente de Chat/Voz/Fotos) ---
 TELEGRAM_BOT_TOKEN="0000000000:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# Secreto del webhook (obligatorio si usas el bot). Genéralo con: openssl rand -hex 32
+# Telegram lo envía en cada update y el backend rechaza (401) los que no lo traen.
+TELEGRAM_WEBHOOK_SECRET="tu-secreto-aleatorio-del-webhook"
 ```
 
 ---
@@ -138,6 +141,7 @@ Si deseas habilitar el asistente financiero por chat, notas de voz y fotos en Te
    - Abre Telegram y busca a **[@BotFather](https://t.me/BotFather)**.
    - Envía el comando `/newbot`, asigna un nombre (ej. `Mi Asistente Raíz`) y un usuario terminado en `bot`.
    - Copia el **HTTP API Token** que te entrega `@BotFather` y colócalo en `TELEGRAM_BOT_TOKEN` dentro de tu `.env` (y en tus variables de entorno de Cloud Run).
+   - Genera un secreto para el webhook (`openssl rand -hex 32`; solo letras, números, `_` y `-`) y colócalo en `TELEGRAM_WEBHOOK_SECRET`. Sin él, el backend rechaza todos los mensajes del bot.
 2. **Desplegar el Backend en Google Cloud Run**:
    - Asegúrate de tener instalado [Google Cloud SDK (`gcloud`)](https://cloud.google.com/sdk/docs/install) y habilitadas las APIs de Cloud Run, Cloud Build y Vertex AI (o usa `GEMINI_API_KEY`).
    - Despliega el servicio ejecutando:
@@ -148,18 +152,21 @@ gcloud run deploy raiz-finanzas-api \
   --region us-central1 \
   --allow-unauthenticated \
   --project TU_PROJECT_ID \
-  --set-env-vars GOOGLE_CLOUD_PROJECT="TU_PROJECT_ID",VITE_FIREBASE_PROJECT_ID="TU_PROJECT_ID",VITE_FIREBASE_API_KEY="TU_FIREBASE_API_KEY",TELEGRAM_BOT_TOKEN="TU_TELEGRAM_BOT_TOKEN",GEMINI_API_KEY="TU_GEMINI_API_KEY"
+  --set-env-vars GOOGLE_CLOUD_PROJECT="TU_PROJECT_ID",VITE_FIREBASE_PROJECT_ID="TU_PROJECT_ID",VITE_FIREBASE_API_KEY="TU_FIREBASE_API_KEY",TELEGRAM_BOT_TOKEN="TU_TELEGRAM_BOT_TOKEN",TELEGRAM_WEBHOOK_SECRET="TU_SECRETO_DEL_WEBHOOK",GEMINI_API_KEY="TU_GEMINI_API_KEY"
 ```
 
 3. **Conectar el Webhook de Telegram a tu URL de Cloud Run**:
    - Una vez desplegado, Cloud Run te dará una URL como `https://raiz-finanzas-api-xxxxx.us-central1.run.app`.
-   - Coloca esa URL en `VITE_API_BASE_URL` en tu `.env` y registra el webhook en Telegram ejecutando:
+   - Coloca esa URL en `VITE_API_BASE_URL` en tu `.env` y registra el webhook en Telegram (una sola vez) incluyendo el mismo secreto en `secret_token`:
 
 ```bash
 curl -X POST "https://api.telegram.org/bot<TU_TELEGRAM_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://<TU_URL_DE_CLOUD_RUN>/api/webhook/telegram"}'
+  -d '{"url": "https://<TU_URL_DE_CLOUD_RUN>/api/webhook/telegram", "secret_token": "<TU_SECRETO_DEL_WEBHOOK>"}'
 ```
+
+   - Si el webhook ya estaba registrado, no tienes que repetir este paso al cambiar el secreto: al arrancar, el backend consulta `getWebhookInfo` y vuelve a registrar la misma URL (y los mismos `allowed_updates`) con el `TELEGRAM_WEBHOOK_SECRET` configurado.
+   - Usa el mismo `TELEGRAM_WEBHOOK_SECRET` en todos los entornos que compartan el mismo bot: un servidor local con el token del bot y otro secreto volvería a registrar el webhook de producción con ese otro secreto.
 
 4. **Desplegar la Web App en Firebase Hosting**:
 

@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { updateDoc } from 'firebase/firestore';
 
 // The firebase.ts module performs side effects at import time (initializeApp,
 // initializeAuth, a Firestore connection probe). All SDK entry points are
@@ -204,6 +205,106 @@ describe('firebase config and pure helpers', () => {
       await firebase.logout();
       expect(h.signOut).toHaveBeenCalled();
       expect(firebase.getCachedAccessToken()).toBeNull();
+    });
+  });
+});
+
+describe('authenticated Telegram backend calls', () => {
+  const ID_TOKEN = 'firebase-id-token-123';
+  const authWithUser = firebase.auth as unknown as {
+    currentUser: { getIdToken: () => Promise<string> } | null;
+  };
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    authWithUser.currentUser = { getIdToken: async () => ID_TOKEN };
+    fetchMock = vi.fn(async () => ({ ok: true, status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    authWithUser.currentUser = null;
+    vi.unstubAllGlobals();
+  });
+
+  it('asks the backend to approve a Telegram request with the owner ID token before marking it approved', async () => {
+    await firebase.approveAccessRequest('espacio_familia', {
+      id: 'req_tg_123',
+      spaceId: 'espacio_familia',
+      spaceName: 'Familia',
+      requesterUid: 'tg:123',
+      requesterEmail: 'Telegram ID: 123',
+      status: 'pending',
+      createdAt: '2026-11-01T00:00:00.000Z',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/telegram\/notify-access$/);
+    expect(init.headers).toMatchObject({
+      Authorization: `Bearer ${ID_TOKEN}`,
+    });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      spaceId: 'espacio_familia',
+      chatId: 'tg:123',
+      status: 'approved',
+    });
+    // The backend only accepts a still-pending request, so it must be called
+    // before the client writes status: 'approved'.
+    const firstStatusWrite = vi
+      .mocked(updateDoc)
+      .mock.calls.findIndex(
+        ([, data]) => (data as { status?: string }).status === 'approved'
+      );
+    expect(firstStatusWrite).toBeGreaterThanOrEqual(0);
+    expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(updateDoc).mock.invocationCallOrder[firstStatusWrite]
+    );
+  });
+
+  it('asks the backend to revoke a Telegram member with the owner ID token before removing it', async () => {
+    await firebase.removeSpaceMember('espacio_familia', 'tg:123');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/telegram\/notify-access$/);
+    expect(init.headers).toMatchObject({
+      Authorization: `Bearer ${ID_TOKEN}`,
+    });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      spaceId: 'espacio_familia',
+      chatId: '123',
+      status: 'revoked',
+    });
+    expect(vi.mocked(updateDoc)).toHaveBeenCalled();
+    expect(fetchMock.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(updateDoc).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('syncs a Telegram draft card with the caller ID token', async () => {
+    await firebase.syncTelegramDraftCard({
+      spaceId: 'espacio_familia',
+      draftId: 'tg_abc_0',
+      chatId: 123,
+      messageId: 456,
+      action: 'APPROVED',
+      description: 'Mercado',
+      amount: 45000,
+      category: 'Alimentación',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/telegram\/sync-draft$/);
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({
+      Authorization: `Bearer ${ID_TOKEN}`,
+    });
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      chatId: 123,
+      messageId: 456,
+      action: 'APPROVED',
     });
   });
 });

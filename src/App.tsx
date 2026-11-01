@@ -124,6 +124,7 @@ import {
   readStoredToken,
   clearStoredToken,
   removeSpaceMember,
+  syncTelegramDraftCard,
   db,
 } from './lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -1510,25 +1511,17 @@ export default function App() {
     action: 'APPROVED' | 'DISCARDED'
   ) => {
     const draftTx: PendingTransactionDraft = tx;
-    const apiBase = (
-      (import.meta as unknown as { env: Record<string, string> }).env
-        ?.VITE_API_BASE_URL || ''
-    ).replace(/\/$/, '');
     if (draftTx.tgChatId && draftTx.tgMessageId) {
-      fetch(`${apiBase}/api/telegram/sync-draft`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          spaceId: currentSpaceId,
-          draftId: tx.id,
-          chatId: draftTx.tgChatId,
-          messageId: draftTx.tgMessageId,
-          action,
-          description: tx.description,
-          amount: tx.amount,
-          category: tx.category,
-        }),
-      }).catch(() => {});
+      void syncTelegramDraftCard({
+        spaceId: currentSpaceId,
+        draftId: tx.id,
+        chatId: draftTx.tgChatId,
+        messageId: draftTx.tgMessageId,
+        action,
+        description: tx.description,
+        amount: tx.amount,
+        category: tx.category,
+      });
     }
   };
 

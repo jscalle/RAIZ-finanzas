@@ -12,6 +12,20 @@ import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getFirestore as getAdminFirestore } from "firebase-admin/firestore";
 import { initializeApp as initClientApp } from "firebase/app";
 import { getFirestore as getClientFirestore, doc, setDoc } from "firebase/firestore";
+import {
+  canSyncTelegramDraft,
+  createTelegramWebhookGuard,
+  decideTelegramAccessChange,
+  extractBearerToken,
+  isValidSpaceId,
+  parseTelegramChatId,
+} from "./server/security";
+import {
+  applyTelegramAccessChange,
+  loadTelegramAccessContext,
+  resolveTelegramChatSpace as resolveTelegramChatSpaceInDb,
+} from "./server/telegramAccess";
+import { syncTelegramWebhookSecret } from "./server/telegramWebhook";
 
 dotenv.config();
 
@@ -81,6 +95,28 @@ function initFirebaseAdmin(): void {
 
 initFirebaseAdmin();
 
+// Verify the `Authorization: Bearer <Firebase ID token>` header and return the
+// caller's uid. Sends 401 and returns null when the token is missing or invalid.
+async function authenticateUid(
+  req: express.Request,
+  res: express.Response
+): Promise<string | null> {
+  const idToken = extractBearerToken(req.headers.authorization);
+  if (!idToken) {
+    res.status(401).json({ error: "Missing or invalid Authorization token." });
+    return null;
+  }
+
+  try {
+    const decoded = await getAdminAuth().verifyIdToken(idToken);
+    return decoded.uid;
+  } catch (error) {
+    console.warn("[auth] ID token verification failed:", error);
+    res.status(401).json({ error: "Missing or invalid Authorization token." });
+    return null;
+  }
+}
+
 // Verify the caller's Firebase ID token when auth is configured.
 // When NOT configured, allow the request (rate limiting still applies) and
 // warn once so the dev path is never blocked but the risk stays visible.
@@ -98,21 +134,22 @@ async function verifyAuth(
     return true;
   }
 
-  const header = req.headers.authorization || "";
-  const match = header.match(/^Bearer (.+)$/);
-  if (!match) {
-    res.status(401).json({ error: "Missing or invalid Authorization token." });
-    return false;
-  }
+  return (await authenticateUid(req, res)) !== null;
+}
 
-  try {
-    await getAdminAuth().verifyIdToken(match[1]);
-    return true;
-  } catch (error) {
-    console.warn("[auth] ID token verification failed:", error);
-    res.status(401).json({ error: "Missing or invalid Authorization token." });
-    return false;
+// Fail-closed variant for endpoints that act on a specific space or chat:
+// without Firebase Admin the caller cannot be identified, so refuse (503).
+async function requireUid(
+  req: express.Request,
+  res: express.Response
+): Promise<string | null> {
+  if (!firebaseAdminReady) {
+    res
+      .status(503)
+      .json({ error: "Authentication is not configured on this server." });
+    return null;
   }
+  return authenticateUid(req, res);
 }
 
 // Lazy initialize Gemini AI client
@@ -591,181 +628,6 @@ Instrucciones:
     }
   });
 
-  // API Route: Meta WhatsApp Cloud API Webhook Verification (GET)
-  app.get("/api/webhook/whatsapp", (req, res) => {
-    const mode = req.query["hub.mode"];
-    const token = req.query["hub.verify_token"];
-    const challenge = req.query["hub.challenge"];
-
-    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || "finpersonal_secret_token";
-
-    if (mode === "subscribe" && token === verifyToken) {
-      console.log("[whatsapp-webhook] Webhook successfully verified with Meta!");
-      res.status(200).send(challenge);
-    } else {
-      console.warn("[whatsapp-webhook] Webhook verification failed. Invalid verify_token.");
-      res.sendStatus(403);
-    }
-  });
-
-  // API Route: Meta WhatsApp Cloud API Ingestion Handler (POST)
-  app.post("/api/webhook/whatsapp", async (req, res) => {
-    if (!rateLimit(req, res)) return;
-
-    // Acknowledge receipt to Meta immediately (prevents duplicate webhook retries)
-    res.sendStatus(200);
-
-    try {
-      const entry = req.body?.entry?.[0];
-      const change = entry?.changes?.[0]?.value;
-      const message = change?.messages?.[0];
-
-      if (!message) {
-        return; // Event notification without messages (e.g. read status)
-      }
-
-      const fromPhone = message.from; // Sender phone number
-      const messageType = message.type;
-      const normalizedSpaceId = process.env.DEFAULT_SPACE_ID || "espacio_compartido";
-      let textContent = "";
-      let base64ImageData: string | null = null;
-      let mimeType = "image/jpeg";
-
-      if (messageType === "text") {
-        textContent = message.text?.body || "";
-      } else if (messageType === "image") {
-        textContent = message.image?.caption || "Captura de pantalla de movimiento financiero";
-        const mediaId = message.image?.id;
-        const whatsappToken = process.env.WHATSAPP_ACCESS_TOKEN;
-
-        if (mediaId && whatsappToken) {
-          try {
-            // Fetch media download URL from Graph API
-            const mediaRes = await fetch(`https://graph.facebook.com/v21.0/${mediaId}`, {
-              headers: { Authorization: `Bearer ${whatsappToken}` },
-            });
-            const mediaJson = (await mediaRes.json()) as { url?: string; mime_type?: string };
-            if (mediaJson.url) {
-              mimeType = mediaJson.mime_type || "image/jpeg";
-              const imgRes = await fetch(mediaJson.url, {
-                headers: { Authorization: `Bearer ${whatsappToken}` },
-              });
-              const arrayBuffer = await imgRes.arrayBuffer();
-              base64ImageData = Buffer.from(arrayBuffer).toString("base64");
-            }
-          } catch (mErr) {
-            console.error("[whatsapp-webhook] Error fetching image media from Meta:", mErr);
-          }
-        }
-      }
-
-      if (!textContent && !base64ImageData) {
-        return;
-      }
-
-      const ai = getGeminiClient();
-      const promptText = `Analiza este mensaje o captura de pantalla enviada por el usuario vía WhatsApp que representa una transacción o ajuste de dinero en Colombia.
-      
-      Instrucciones:
-      1. Determina el tipo ("EXPENSE", "INCOME", "TRANSFER", "DEBT_PAYMENT", "UNCATEGORIZED").
-      2. Extrae el monto numérico positivo (amount).
-      3. Extrae la moneda (currency, por defecto 'COP').
-      4. Extrae o deduce la forma de pago ("CREDITO", "DEBITO", "EFECTIVO"). Si es tarjeta de crédito o avance TC, usa "CREDITO".
-      5. Genera una descripción corta (description).
-      6. Asigna una categoría (category) adecuada (ej: Comida, Transporte, Servicios, Entretenimiento, Ahorros, Salud, Deudas, Otros).
-      7. Extrae la fecha (date) en YYYY-MM-DD o la fecha de hoy.
-      8. Da una breve explicación amigable de 1 oración (explanation).
-
-      Texto recibido: "${textContent.slice(0, 1000)}"`;
-
-      const contents: any[] = [];
-      if (base64ImageData) {
-        contents.push({
-          inlineData: {
-            mimeType: mimeType,
-            data: base64ImageData,
-          },
-        });
-      }
-      contents.push(promptText);
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: contents,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              type: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              currency: { type: Type.STRING },
-              paymentMethod: { type: Type.STRING, description: "CREDITO, DEBITO, EFECTIVO" },
-              description: { type: Type.STRING },
-              category: { type: Type.STRING },
-              date: { type: Type.STRING },
-              explanation: { type: Type.STRING },
-            },
-            required: ["type", "amount", "description", "category", "explanation"],
-          },
-        },
-      });
-
-      const parsedData = JSON.parse(response.text?.trim() || "{}");
-      const pendingDocId = `wa_${Date.now()}`;
-      const pendingItem = {
-        id: pendingDocId,
-        spaceId: normalizedSpaceId,
-        type: parsedData.type || "EXPENSE",
-        amount: parsedData.amount || 0,
-        currency: parsedData.currency || "COP",
-        paymentMethod: parsedData.paymentMethod || "DEBITO",
-        description: parsedData.description || "Movimiento WhatsApp",
-        category: parsedData.category || "Otros",
-        date: normalizeDateToISO(parsedData.date),
-        explanation: parsedData.explanation || "",
-        status: "PENDING",
-        source: "WHATSAPP_WEBHOOK",
-        createdAt: new Date().toISOString(),
-        rawText: textContent,
-        senderPhone: fromPhone,
-      };
-
-      await setDoc(doc(clientDb, "spaces", normalizedSpaceId, "pending_transactions", pendingDocId), pendingItem);
-      console.log(`[whatsapp-webhook] Saved WhatsApp pending transaction ${pendingDocId} for ${fromPhone}`);
-
-      // Auto-reply back to user via WhatsApp Cloud API if access token is available
-      const whatsappToken = process.env.WHATSAPP_ACCESS_TOKEN;
-      const phoneNumberId = change?.metadata?.phone_number_id;
-
-      if (whatsappToken && phoneNumberId && fromPhone) {
-        const replyText = `✅ *Movimiento capturado por RAÍZ*\n\n` +
-          `• *Tipo*: ${parsedData.type === "EXPENSE" ? "Gasto" : parsedData.type}\n` +
-          `• *Monto*: $${(parsedData.amount || 0).toLocaleString("es-CO")} ${parsedData.currency || "COP"}\n` +
-          `• *Método*: ${parsedData.paymentMethod || "DÉBITO"}\n` +
-          `• *Detalle*: ${parsedData.description}\n` +
-          `• *Categoría*: ${parsedData.category}\n\n` +
-          `_${parsedData.explanation}_`;
-
-        await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${whatsappToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            messaging_product: "whatsapp",
-            to: fromPhone,
-            type: "text",
-            text: { body: replyText },
-          }),
-        }).catch((err) => console.error("[whatsapp-webhook] Failed to send WhatsApp auto-reply:", err));
-      }
-    } catch (err) {
-      console.error("[whatsapp-webhook] Error processing WhatsApp webhook:", err);
-    }
-  });
-
   // --- Telegram Bot Interactive Assistant ---
   import("dns").then((dns) => {
     if (dns.setDefaultResultOrder) {
@@ -774,6 +636,22 @@ Instrucciones:
   }).catch(() => {});
 
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  // Updates to /api/webhook/telegram must carry TELEGRAM_WEBHOOK_SECRET in the
+  // X-Telegram-Bot-Api-Secret-Token header. Without the secret every update is
+  // rejected; report that once (never the secret value itself).
+  let webhookSecretMissingReported = false;
+  const reportMissingWebhookSecret = () => {
+    if (webhookSecretMissingReported) return;
+    webhookSecretMissingReported = true;
+    console.error(
+      "[telegram] TELEGRAM_WEBHOOK_SECRET is not set: every Telegram webhook update is rejected with 401. Set it on the service; on the next start the registered webhook is updated with it."
+    );
+  };
+  const telegramWebhookGuard = createTelegramWebhookGuard({
+    getSecret: () => process.env.TELEGRAM_WEBHOOK_SECRET,
+    onMissingSecret: reportMissingWebhookSecret,
+  });
 
   async function tgSend(method: string, body: any) {
     if (!telegramToken) return null;
@@ -1336,141 +1214,51 @@ Instrucciones:
     return null;
   }
 
-  async function resolveTelegramChatSpace(chatId: number | string): Promise<{
-    status: "approved" | "pending" | "rejected" | "unlinked";
-    spaceId?: string;
-    spaceName?: string;
-    spaceCode?: string;
-    ownerEmail?: string;
-  }> {
-    const adminDb = getAdminFirestore();
-    const chatKey = String(chatId);
-    const tgMemberUid = `tg:${chatKey}`;
+  // Resolves which space an incoming Telegram chat belongs to (see
+  // server/telegramAccess.ts); approved chats are lazily added as members.
+  const resolveTelegramChatSpace = (chatId: number | string) =>
+    resolveTelegramChatSpaceInDb(getAdminFirestore(), chatId);
 
-    try {
-      const linkSnap = await adminDb.collection("telegram_links").doc(chatKey).get();
-      if (!linkSnap.exists) {
-        return { status: "unlinked" };
-      }
-
-      const linkData: any = linkSnap.data() || {};
-      const spaceId: string = linkData.spaceId;
-      if (!spaceId) {
-        return { status: "unlinked" };
-      }
-
-      const [spaceSnap, reqSnap] = await Promise.all([
-        adminDb.collection("spaces").doc(spaceId).get(),
-        adminDb.collection("spaces").doc(spaceId).collection("access_requests").doc(`req_tg_${chatKey}`).get(),
-      ]);
-
-      if (!spaceSnap.exists) {
-        return { status: "unlinked" };
-      }
-
-      const spaceData: any = spaceSnap.data() || {};
-      const members: string[] = Array.isArray(spaceData.members) ? spaceData.members : [];
-      const reqData: any = reqSnap.exists ? reqSnap.data() : null;
-
-      const isMember = members.includes(tgMemberUid);
-      const isReqApproved = reqData?.status === "approved" || (isMember && !reqData);
-
-      if (isReqApproved) {
-        const updates: Promise<any>[] = [];
-        if (!isMember) {
-          updates.push(
-            adminDb
-              .collection("spaces")
-              .doc(spaceId)
-              .set({ members: [...members, tgMemberUid] }, { merge: true })
-          );
-        }
-        if (linkData.status !== "approved") {
-          updates.push(
-            adminDb.collection("telegram_links").doc(chatKey).set({ status: "approved" }, { merge: true })
-          );
-        }
-        if (updates.length > 0) {
-          await Promise.all(updates);
-        }
-        return {
-          status: "approved",
-          spaceId,
-          spaceName: spaceData.name || spaceId,
-          spaceCode: spaceData.code || linkData.spaceCode || "",
-          ownerEmail: spaceData.ownerEmail || "",
-        };
-      }
-
-      if (reqData?.status === "pending") {
-        return {
-          status: "pending",
-          spaceId,
-          spaceName: spaceData.name || linkData.spaceName || spaceId,
-          spaceCode: spaceData.code || linkData.spaceCode || "",
-          ownerEmail: spaceData.ownerEmail || "",
-        };
-      }
-
-      return {
-        status: "rejected",
-        spaceId,
-        spaceName: spaceData.name || linkData.spaceName || spaceId,
-        spaceCode: spaceData.code || linkData.spaceCode || "",
-        ownerEmail: spaceData.ownerEmail || "",
-      };
-    } catch (e) {
-      console.error("[telegram] Error resolving Telegram chat space:", e);
-      return { status: "unlinked" };
-    }
-  }
-
-  // API Route: Notify Telegram user when Space Owner Approves, Rejects or Revokes access from the Web App
+  // API Route: Notify Telegram user when Space Owner Approves, Rejects or Revokes access from the Web App.
+  // Requires the space owner's Firebase ID token and an access request from
+  // that chat (rules in decideTelegramAccessChange, server/security.ts).
   app.post("/api/telegram/notify-access", async (req, res) => {
+    const callerUid = await requireUid(req, res);
+    if (!callerUid) return;
     try {
-      const { spaceId, spaceName, spaceCode, chatId, status } = req.body || {};
-      if (!chatId || !status) {
-        res.status(400).json({ error: "Missing chatId or status" });
+      const { spaceId, chatId, status } = req.body || {};
+      const spaceName = typeof req.body?.spaceName === "string" ? req.body.spaceName : undefined;
+      const spaceCode = typeof req.body?.spaceCode === "string" ? req.body.spaceCode : undefined;
+      const cleanChatId = parseTelegramChatId(chatId);
+      if (!cleanChatId || !isValidSpaceId(spaceId)) {
+        res.status(400).json({ error: "Missing or invalid spaceId or chatId" });
         return;
       }
 
-      const cleanChatId = String(chatId).replace(/^tg:/, "").replace(/^req_tg_/, "");
-      const tgMemberUid = `tg:${cleanChatId}`;
       const adminDb = getAdminFirestore();
-
-      if (spaceId) {
-        const spaceRef = adminDb.collection("spaces").doc(spaceId);
-        const spaceSnap = await spaceRef.get();
-        if (spaceSnap.exists) {
-          const currentMembers: string[] = Array.isArray(spaceSnap.data()?.members)
-            ? spaceSnap.data()!.members
-            : [];
-          const nextMembers =
-            status === "approved"
-              ? currentMembers.includes(tgMemberUid)
-                ? currentMembers
-                : [...currentMembers, tgMemberUid]
-              : currentMembers.filter((m) => m !== tgMemberUid);
-          await spaceRef.set({ members: nextMembers }, { merge: true });
-        }
-        await spaceRef
-          .collection("access_requests")
-          .doc(`req_tg_${cleanChatId}`)
-          .set({ status: status === "approved" ? "approved" : "rejected" }, { merge: true });
+      const context = await loadTelegramAccessContext(adminDb, spaceId, cleanChatId);
+      const decision = decideTelegramAccessChange({
+        callerUid,
+        spaceId,
+        chatId: cleanChatId,
+        status,
+        ...context,
+      });
+      if (!decision.ok) {
+        res.status(decision.httpStatus).json({ error: decision.error });
+        return;
       }
 
-      await adminDb.collection("telegram_links").doc(cleanChatId).set(
-        {
-          status: status === "approved" ? "approved" : "rejected",
-          updatedAt: new Date().toISOString(),
-          ...(spaceId ? { spaceId } : {}),
-          ...(spaceName ? { spaceName } : {}),
-          ...(spaceCode ? { spaceCode } : {}),
-        },
-        { merge: true }
-      );
+      await applyTelegramAccessChange(adminDb, {
+        spaceId,
+        chatId: cleanChatId,
+        status: decision.status,
+        currentMembers: context.space?.members,
+        spaceName,
+        spaceCode,
+      });
 
-      if (status === "approved") {
+      if (decision.status === "approved") {
         await tgSend("sendMessage", {
           chat_id: cleanChatId,
           parse_mode: "Markdown",
@@ -1484,8 +1272,8 @@ Instrucciones:
           chat_id: cleanChatId,
           parse_mode: "Markdown",
           text:
-            `🚫 *Acceso ${status === "revoked" ? "Revocado" : "Denegado"}*\n\n` +
-            `El propietario del espacio *${spaceName || spaceId || "Compartido"}* ha ${status === "revoked" ? "revocado" : "denegado"} el acceso de tu cuenta de Telegram (*ID: ${cleanChatId}*).`,
+            `🚫 *Acceso ${decision.status === "revoked" ? "Revocado" : "Denegado"}*\n\n` +
+            `El propietario del espacio *${spaceName || spaceId || "Compartido"}* ha ${decision.status === "revoked" ? "revocado" : "denegado"} el acceso de tu cuenta de Telegram (*ID: ${cleanChatId}*).`,
         });
       }
 
@@ -1496,56 +1284,37 @@ Instrucciones:
     }
   });
 
-  // API Route: Reset / Log out all Telegram sessions for a space so everyone must reconnect via /conectar + Web Approval
-  app.post("/api/telegram/reset-sessions", async (req, res) => {
-    try {
-      const targetSpaceId = req.body?.spaceId || process.env.DEFAULT_SPACE_ID || "espacio_compartido";
-      const adminDb = getAdminFirestore();
-
-      const spaceRef = adminDb.collection("spaces").doc(targetSpaceId);
-      const spaceSnap = await spaceRef.get();
-      if (spaceSnap.exists) {
-        const spaceData: any = spaceSnap.data() || {};
-        const filteredMembers = (Array.isArray(spaceData.members) ? spaceData.members : []).filter(
-          (m: string) => !String(m).startsWith("tg:")
-        );
-        await spaceRef.set({ members: filteredMembers }, { merge: true });
-      }
-
-      const reqsSnap = await spaceRef.collection("access_requests").get();
-      for (const rDoc of reqsSnap.docs) {
-        if (rDoc.id.startsWith("req_tg_")) {
-          await rDoc.ref.delete();
-        }
-      }
-
-      const linksSnap = await adminDb.collection("telegram_links").get();
-      for (const lDoc of linksSnap.docs) {
-        if (!req.body?.spaceId || lDoc.data()?.spaceId === targetSpaceId) {
-          await lDoc.ref.delete();
-        }
-      }
-
-      res.json({ success: true, spaceId: targetSpaceId });
-    } catch (err: any) {
-      console.error("[telegram] Error in /api/telegram/reset-sessions:", err);
-      res.status(500).json({ error: err.message || "Failed to reset sessions" });
-    }
-  });
-
-  // API Route: Sync Telegram draft card when approved or discarded from the Web App
+  // API Route: Sync Telegram draft card when approved or discarded from the Web App.
+  // Requires the Firebase ID token of a member of the space the chat is linked
+  // to (telegram_links/<chatId>.spaceId).
   app.post("/api/telegram/sync-draft", async (req, res) => {
+    const callerUid = await requireUid(req, res);
+    if (!callerUid) return;
     try {
       const { chatId, messageId, action, description, amount, category } = req.body || {};
-      if (!chatId || !messageId) {
+      const chatKey = parseTelegramChatId(chatId);
+      if (!chatKey || !messageId) {
         res.status(400).json({ error: "Missing chatId or messageId" });
+        return;
+      }
+
+      const adminDb = getAdminFirestore();
+      const linkSnap = await adminDb.collection("telegram_links").doc(chatKey).get();
+      const link = linkSnap.exists ? linkSnap.data() || {} : null;
+      const linkedSpaceId = link?.spaceId;
+      const spaceSnap = isValidSpaceId(linkedSpaceId)
+        ? await adminDb.collection("spaces").doc(linkedSpaceId).get()
+        : null;
+      const space = spaceSnap?.exists ? spaceSnap.data() || {} : null;
+      if (!canSyncTelegramDraft({ uid: callerUid, link, space })) {
+        res.status(403).json({ error: "Not a member of the space linked to this Telegram chat." });
         return;
       }
 
       const fmtAmt = `$${(Number(amount) || 0).toLocaleString("es-CO")}`;
       if (action === "APPROVED") {
         await tgSend("editMessageText", {
-          chat_id: chatId,
+          chat_id: chatKey,
           message_id: messageId,
           parse_mode: "Markdown",
           text:
@@ -1556,7 +1325,7 @@ Instrucciones:
         });
       } else {
         await tgSend("editMessageText", {
-          chat_id: chatId,
+          chat_id: chatKey,
           message_id: messageId,
           parse_mode: "Markdown",
           text: `🗑️ *Movimiento descartado desde la Web App*\n~${description || "Movimiento"} (${fmtAmt})~`,
@@ -1570,47 +1339,9 @@ Instrucciones:
     }
   });
 
-  // API Route: Clean demo seed records and normalize accidental source='AHORROS' in a Space
-  app.post("/api/spaces/audit-clean", async (req, res) => {
-    try {
-      const targetSpaceId = req.body?.spaceId || process.env.DEFAULT_SPACE_ID || "espacio_compartido";
-      const adminDb = getAdminFirestore();
-      const spaceRef = adminDb.collection("spaces").doc(targetSpaceId);
-
-      await spaceRef.set({ startingSavings: 10000 }, { merge: true });
-
-      const subcols = ["topics", "incomes", "expenses", "goals", "contributions"];
-      let deletedDemoCount = 0;
-      let fixedSavingsSourceCount = 0;
-
-      for (const colName of subcols) {
-        const snap = await spaceRef.collection(colName).get();
-        for (const docSnap of snap.docs) {
-          if (DEMO_SEED_IDS.has(docSnap.id)) {
-            await docSnap.ref.delete();
-            deletedDemoCount++;
-            continue;
-          }
-          if (colName === "expenses" && docSnap.data()?.source === "AHORROS") {
-            await docSnap.ref.set({ source: "INGRESOS" }, { merge: true });
-            fixedSavingsSourceCount++;
-          }
-        }
-      }
-
-      res.json({
-        success: true,
-        spaceId: targetSpaceId,
-        deletedDemoCount,
-        fixedSavingsSourceCount,
-      });
-    } catch (err: any) {
-      console.error("[audit-clean] Error cleaning space:", err);
-      res.status(500).json({ error: err.message || "Failed to clean space" });
-    }
-  });
-
-  app.post("/api/webhook/telegram", async (req, res) => {
+  // Telegram Bot API webhook. telegramWebhookGuard rejects (401) any update
+  // without the X-Telegram-Bot-Api-Secret-Token matching TELEGRAM_WEBHOOK_SECRET.
+  app.post("/api/webhook/telegram", telegramWebhookGuard, async (req, res) => {
     if (!telegramToken) {
       console.warn("[telegram] TELEGRAM_BOT_TOKEN not configured.");
       res.sendStatus(200);
@@ -2523,6 +2254,16 @@ Mensaje de texto adicional del usuario: "${text ? text.slice(0, 2000) : "(Nota d
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // Keep the registered Telegram webhook in sync with TELEGRAM_WEBHOOK_SECRET
+  // (same URL and allowed_updates) so a new secret needs no manual setWebhook.
+  if (telegramToken && !process.env.TELEGRAM_WEBHOOK_SECRET) {
+    reportMissingWebhookSecret();
+  }
+  void syncTelegramWebhookSecret({
+    botToken: telegramToken,
+    secret: process.env.TELEGRAM_WEBHOOK_SECRET,
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${PORT}`);

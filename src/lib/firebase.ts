@@ -603,6 +603,28 @@ export const subscribeToAccessRequestStatus = (
 
 const TELEGRAM_API_BASE = (metaEnv.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
+// POST a JSON body to the backend authenticated with the signed-in user's
+// Firebase ID token. Sends nothing (returns null) when nobody is signed in,
+// since the backend rejects anonymous calls.
+const postWithIdToken = async (
+  path: string,
+  payload: unknown
+): Promise<Response | null> => {
+  const idToken = await getIdToken();
+  if (!idToken) return null;
+  return fetch(`${TELEGRAM_API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+};
+
+// Best effort: the backend updates the Telegram link and messages the chat.
+// It only accepts the space owner and, for approve/reject, a request that is
+// still pending, so callers invoke it before writing the new request status.
 const notifyTelegramAccessChange = async (payload: {
   spaceId: string;
   spaceName?: string;
@@ -610,13 +632,34 @@ const notifyTelegramAccessChange = async (payload: {
   status: 'approved' | 'rejected' | 'revoked';
 }) => {
   try {
-    await fetch(`${TELEGRAM_API_BASE}/api/telegram/notify-access`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const res = await postWithIdToken('/api/telegram/notify-access', payload);
+    if (res && !res.ok) {
+      console.warn(
+        'Telegram access push notification was refused:',
+        res.status
+      );
+    }
   } catch (e) {
     console.warn('Could not send Telegram access push notification:', e);
+  }
+};
+
+// Best effort: edit the Telegram draft card after the draft was confirmed or
+// discarded from the Web App.
+export const syncTelegramDraftCard = async (payload: {
+  spaceId: string;
+  draftId: string;
+  chatId: string | number;
+  messageId: string | number;
+  action: 'APPROVED' | 'DISCARDED';
+  description?: string;
+  amount?: number;
+  category?: string;
+}) => {
+  try {
+    await postWithIdToken('/api/telegram/sync-draft', payload);
+  } catch (e) {
+    console.warn('Could not sync the Telegram draft card:', e);
   }
 };
 
@@ -629,12 +672,23 @@ export const approveAccessRequest = async (
   const reqRef = doc(db, 'spaces', cleanId, 'access_requests', request.id);
   const spaceRef = doc(db, 'spaces', cleanId);
 
-  // Update request status
-  await updateDoc(reqRef, { status: 'approved' });
-
   const isTelegramReq =
     request.requesterUid?.startsWith('tg:') ||
     request.id?.startsWith('req_tg_');
+
+  // The backend approves Telegram requests only while they are still pending,
+  // so it runs before the request status is updated below.
+  if (isTelegramReq) {
+    await notifyTelegramAccessChange({
+      spaceId: cleanId,
+      spaceName: request.spaceName,
+      chatId: request.requesterUid,
+      status: 'approved',
+    });
+  }
+
+  // Update request status
+  await updateDoc(reqRef, { status: 'approved' });
 
   // Add requester to space members
   if (isTelegramReq) {
@@ -645,12 +699,6 @@ export const approveAccessRequest = async (
     } catch (e) {
       console.warn('Space members update delegated to backend:', e);
     }
-    await notifyTelegramAccessChange({
-      spaceId: cleanId,
-      spaceName: request.spaceName,
-      chatId: request.requesterUid,
-      status: 'approved',
-    });
   } else {
     await updateDoc(spaceRef, {
       members: arrayUnion(request.requesterUid, request.requesterEmail),
@@ -665,8 +713,8 @@ export const rejectAccessRequest = async (
 ) => {
   const cleanId = normalizeSpaceId(spaceId);
   const reqRef = doc(db, 'spaces', cleanId, 'access_requests', requestId);
-  await updateDoc(reqRef, { status: 'rejected' });
 
+  // Like approval, the backend only rejects a still-pending Telegram request.
   if (requestId.startsWith('req_tg_')) {
     await notifyTelegramAccessChange({
       spaceId: cleanId,
@@ -674,6 +722,8 @@ export const rejectAccessRequest = async (
       status: 'rejected',
     });
   }
+
+  await updateDoc(reqRef, { status: 'rejected' });
 };
 
 // Regenerate unique space code
@@ -769,17 +819,29 @@ export const removeSpaceMember = async (
 ): Promise<void> => {
   const cleanId = normalizeSpaceId(spaceId);
   const spaceRef = doc(db, 'spaces', cleanId);
+  const isTelegramMember = memberUid.startsWith('tg:');
+  const cleanChatId = memberUid.replace(/^tg:/, '');
+
+  // The backend checks the Telegram member against the current space, so it
+  // runs before this client removes the member below.
+  if (isTelegramMember) {
+    await notifyTelegramAccessChange({
+      spaceId: cleanId,
+      chatId: cleanChatId,
+      status: 'revoked',
+    });
+  }
+
   try {
     await updateDoc(spaceRef, {
       members: arrayRemove(memberUid),
     });
   } catch (e) {
-    if (!memberUid.startsWith('tg:')) throw e;
+    if (!isTelegramMember) throw e;
     console.warn('Space members removal delegated to backend:', e);
   }
 
-  if (memberUid.startsWith('tg:')) {
-    const cleanChatId = memberUid.replace(/^tg:/, '');
+  if (isTelegramMember) {
     try {
       const reqRef = doc(
         db,
@@ -792,11 +854,6 @@ export const removeSpaceMember = async (
     } catch (e) {
       console.warn('Could not mark Telegram access_request rejected:', e);
     }
-    await notifyTelegramAccessChange({
-      spaceId: cleanId,
-      chatId: cleanChatId,
-      status: 'revoked',
-    });
   }
 };
 
