@@ -54,9 +54,11 @@ export type SpaceAccessRequestDecision =
 
 // Contract C1 outcome for a caller asking to join `space`:
 // - owner or member: `member` (nothing to request);
-// - an approved `req_<uid>` request: `approved`;
 // - a pending one: `pending`, left as is (idempotent);
-// - none, rejected or revoked: a (re-)opened `pending` request.
+// - none, rejected, revoked, or an `approved` one whose caller is no longer a
+//   member (a stale approval after revocation): a (re-)opened `pending` request.
+// An approved request only means access while the uid is in `members`, so it
+// never short-circuits here (members already returned `member` above).
 export function decideSpaceAccessRequest(input: {
   uid: string;
   space: SpaceDoc;
@@ -64,7 +66,6 @@ export function decideSpaceAccessRequest(input: {
 }): SpaceAccessRequestDecision {
   const { uid, space, existingRequest } = input;
   if (isSpaceMember(space, uid)) return { status: 'member' };
-  if (existingRequest?.status === 'approved') return { status: 'approved' };
   if (existingRequest?.status === 'pending') {
     return { status: 'pending', writeRequest: false };
   }

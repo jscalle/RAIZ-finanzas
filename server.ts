@@ -1058,6 +1058,8 @@ async function startServer() {
   // API Route: ask to join a space by its code or id (contract C1). The caller
   // is identified by the verified ID token; only `code` is read from the body.
   app.post("/api/spaces/request-access", firebaseProjectGuard, async (req, res) => {
+    // Throttle code/id guessing (same per-IP limiter as parse-movement).
+    if (!rateLimit(req, res)) return;
     const caller = await requireIdToken(req, res);
     if (!caller) return;
     try {

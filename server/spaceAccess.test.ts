@@ -206,14 +206,14 @@ describe('POST /api/spaces/request-access (S7 / contract C1)', () => {
     expect(reopened).not.toHaveProperty('decidedAt');
   });
 
-  it('returns approved for an already approved request without rewriting it', async () => {
+  it('re-opens a stale approved request when the caller is no longer a member', async () => {
     const state = spaceState();
     state[REQUEST_PATH] = {
       userId: REQUESTER,
       status: 'approved',
       decidedBy: OWNER,
     };
-    const { db, writes } = createFakeDb(state);
+    const { db, store, writes } = createFakeDb(state);
 
     await expect(
       requestSpaceAccess(db, {
@@ -223,9 +223,13 @@ describe('POST /api/spaces/request-access (S7 / contract C1)', () => {
       })
     ).resolves.toEqual({
       httpStatus: 200,
-      body: { status: 'approved', spaceId: SPACE_ID, spaceName: 'Familia' },
+      body: { status: 'pending', spaceId: SPACE_ID, spaceName: 'Familia' },
     });
-    expect(writes).toEqual([]);
+    // A revoked member's old approval must not lock them out of re-requesting.
+    expect(writes).toEqual([REQUEST_PATH]);
+    const reopened = store.get(REQUEST_PATH);
+    expect(reopened).toMatchObject({ status: 'pending' });
+    expect(reopened).not.toHaveProperty('decidedBy');
   });
 });
 
@@ -242,7 +246,7 @@ describe('decideSpaceAccessRequest', () => {
         space,
         existingRequest: { status: 'approved' },
       })
-    ).toEqual({ status: 'approved' });
+    ).toEqual({ status: 'pending', writeRequest: true });
     expect(
       decideSpaceAccessRequest({
         uid: REQUESTER,
