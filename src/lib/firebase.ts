@@ -34,6 +34,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { resolveAuthDomain } from './authDomain';
 
 // Dynamic Firebase Configuration prioritizing env variables or default project config
 const metaEnv =
@@ -44,10 +45,14 @@ const activeFirebaseConfig = {
     metaEnv.VITE_FIREBASE_API_KEY ||
     firebaseConfig.apiKey ||
     'your-firebase-api-key',
-  authDomain:
+  // Same-origin on hosted pages so redirect sign-in works on every browser.
+  authDomain: resolveAuthDomain(
     metaEnv.VITE_FIREBASE_AUTH_DOMAIN ||
-    firebaseConfig.authDomain ||
-    'your-firebase-project-id.firebaseapp.com',
+      firebaseConfig.authDomain ||
+      'your-firebase-project-id.firebaseapp.com',
+    typeof window !== 'undefined' ? window.location : null,
+    Capacitor.isNativePlatform()
+  ),
   projectId:
     metaEnv.VITE_FIREBASE_PROJECT_ID ||
     firebaseConfig.projectId ||
