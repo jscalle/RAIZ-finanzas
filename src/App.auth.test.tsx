@@ -343,6 +343,13 @@ async function openSyncSettings() {
   return screen.findByText('Nube y Finanzas Compartidas');
 }
 
+/** Expands the collapsed "Usar correo y contraseña" form. */
+function openEmailForm() {
+  fireEvent.click(
+    screen.getByRole('button', { name: /Usar correo y contraseña/i })
+  );
+}
+
 describe('App signed-in + cloud sync', () => {
   it('renders the authenticated cloud state when initAuth reports a signed-in user', async () => {
     render(<App />);
@@ -375,10 +382,12 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
     await openSyncSettings();
 
-    // SyncPanel's authenticated branch: connected email, active-space badge and
+    // SyncPanel's authenticated branch: connected email, 'Mi espacio' block and
     // the space name echoed back from getOrCreateSpace.
     expect(await screen.findByText('tester@demo.com')).toBeInTheDocument();
-    expect(screen.getByText('ESPACIO ACTIVO EN NUBE')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Mi espacio' })
+    ).toBeInTheDocument();
     expect(screen.getByText('Presupuesto de tester')).toBeInTheDocument();
   });
 
@@ -403,7 +412,8 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
     await openSyncSettings();
 
-    // The signed-out branch renders the email/password form.
+    // The signed-out branch keeps the email/password form behind a toggle.
+    openEmailForm();
     fireEvent.change(screen.getByPlaceholderText('ejemplo@correo.com'), {
       target: { value: 'user@mail.com' },
     });
@@ -425,7 +435,8 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
     await openSyncSettings();
 
-    // Toggle the form into register mode, then submit.
+    // Open the form, toggle it into register mode, then submit.
+    openEmailForm();
     fireEvent.click(
       screen.getByRole('button', {
         name: /¿No tienes cuenta\? Regístrate gratis aquí/i,
@@ -478,19 +489,16 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
     await openSyncSettings();
 
-    fireEvent.change(
-      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
-      { target: { value: 'ESP-TARGET' } }
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: /Solicitar Acceso al Espacio/i })
-    );
+    fireEvent.change(screen.getByPlaceholderText('ESP-XXXXXXXX'), {
+      target: { value: 'ESP-TARGET' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Solicitar acceso/i }));
 
     // handleRequestJoinSpace -> requestAccessToSpace returns 'pending', which
-    // surfaces the "Solicitud Enviada" waiting card with the target space name.
+    // surfaces the "Solicitud enviada" waiting card with the target space name.
     await waitFor(() => expect(H.spy.requestAccess.length).toBe(1));
     expect(H.spy.requestAccess[0][0]).toBe('ESP-TARGET');
-    expect(await screen.findByText('Solicitud Enviada')).toBeInTheDocument();
+    expect(await screen.findByText('Solicitud enviada')).toBeInTheDocument();
     expect(screen.getByText('Espacio Objetivo')).toBeInTheDocument();
   });
 
@@ -537,29 +545,26 @@ describe('App signed-in + cloud sync', () => {
     render(<App />);
     await openSyncSettings();
 
-    fireEvent.change(
-      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
-      { target: { value: 'ESP-COMPARTI' } }
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: /Solicitar Acceso al Espacio/i })
-    );
+    fireEvent.change(screen.getByPlaceholderText('ESP-XXXXXXXX'), {
+      target: { value: 'ESP-COMPARTI' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Solicitar acceso/i }));
 
     await waitFor(() =>
       expect(screen.getAllByText('espacio_compartido').length).toBeGreaterThan(
         0
       )
     );
-    expect(screen.queryByText('Solicitud Enviada')).toBeNull();
+    expect(screen.queryByText('Solicitud enviada')).toBeNull();
   });
 
-  it('opens its own default space from the shortcut without asking the backend', async () => {
+  it('opens its own default space from the "Volver a mi espacio" strip without asking the backend', async () => {
     localStorage.setItem('p_current_space_id', 'espacio_compartido');
     render(<App />);
     await openSyncSettings();
 
     fireEvent.click(
-      await screen.findByRole('button', { name: /espacio_u_uid_test/ })
+      await screen.findByRole('button', { name: 'Volver a mi espacio' })
     );
 
     await waitFor(() =>
@@ -573,17 +578,14 @@ describe('App signed-in + cloud sync', () => {
   it('cancels its own pending request without deciding it', async () => {
     render(<App />);
     await openSyncSettings();
-    fireEvent.change(
-      screen.getByPlaceholderText('ej. ESP-9K2F7M4Q o espacio_hogar'),
-      { target: { value: 'ESP-TARGET' } }
-    );
-    fireEvent.click(
-      screen.getByRole('button', { name: /Solicitar Acceso al Espacio/i })
-    );
-    await screen.findByText('Solicitud Enviada');
+    fireEvent.change(screen.getByPlaceholderText('ESP-XXXXXXXX'), {
+      target: { value: 'ESP-TARGET' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Solicitar acceso/i }));
+    await screen.findByText('Solicitud enviada');
 
     fireEvent.click(
-      screen.getByRole('button', { name: /Cancelar Solicitud/i })
+      screen.getByRole('button', { name: /Cancelar solicitud/i })
     );
 
     await waitFor(() =>
@@ -609,8 +611,10 @@ describe('App signed-in + cloud sync', () => {
     localStorage.setItem('p_current_space_id', 'espacio_compartido');
     render(<App />);
     await openSyncSettings();
-    // The "Mi Espacio" shortcut shows once the default space is resolved.
-    expect(await screen.findByText('espacio_u_uid_test')).toBeInTheDocument();
+    // The "Volver a mi espacio" strip shows once the default space is resolved.
+    expect(
+      await screen.findByRole('button', { name: 'Volver a mi espacio' })
+    ).toBeInTheDocument();
 
     act(() => {
       H.spaceListeners
