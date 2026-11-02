@@ -61,6 +61,15 @@ describe('SyncPanel signed out', () => {
     ).toBeInTheDocument();
   });
 
+  it('links first-time users to the onboarding guide in a new tab', () => {
+    renderPanel();
+
+    const link = screen.getByRole('link', { name: /guía de inicio/i });
+    expect(link).toHaveAttribute('href', '/guia');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noopener');
+  });
+
   it('calls onLogin when the Google button is pressed', () => {
     const props = renderPanel();
     fireEvent.click(

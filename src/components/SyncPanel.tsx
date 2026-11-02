@@ -232,6 +232,18 @@ export default function SyncPanel({
             <Lock className="h-4 w-4" />
             Continuar con Google
           </button>
+          <p className={helpClass}>
+            ¿Primera vez?{' '}
+            <a
+              href="/guia"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold underline underline-offset-2"
+            >
+              Mira la guía de inicio
+            </a>
+            .
+          </p>
 
           <div className="min-w-0 border border-border/40 rounded-xl bg-muted/10">
             <button
