@@ -73,6 +73,26 @@ describe('DashboardSection', () => {
     expect(screen.getByText('$3,400')).toBeInTheDocument();
   });
 
+  it('keeps phone layouts from overflowing the screen with long descriptions', () => {
+    // jsdom has no layout engine, so pin the classes that prevent the overflow:
+    // an unnamed grid column grows to its widest unbreakable text (e.g. a long
+    // description), pushing cards past the right edge on phones.
+    const { container } = render(
+      <DashboardSection
+        {...buildProps({ totals: { ingreso: 4000, gasto: 1000, ahorro: 500 } })}
+      />
+    );
+    const responsiveGrids = Array.from(
+      container.querySelectorAll('[class*="grid"]')
+    ).filter((el) =>
+      /(^|\s)(sm|md|lg):grid-cols-\d+/.test(el.getAttribute('class') ?? '')
+    );
+    expect(responsiveGrids.length).toBeGreaterThanOrEqual(3);
+    for (const grid of responsiveGrids) {
+      expect(grid.classList.contains('grid-cols-1')).toBe(true);
+    }
+  });
+
   it('should compute the savings rate as ahorro over ingreso', () => {
     render(
       <DashboardSection

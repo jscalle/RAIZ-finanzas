@@ -271,7 +271,7 @@ export default function DashboardSection({
       </section>
 
       {/* Flow cards */}
-      <section className="grid gap-4 sm:grid-cols-3">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {(['ingreso', 'gasto', 'ahorro'] as const).map((f) => {
           const IconComp = ICON_REGISTRY[flowMeta[f].icon] || Circle;
           return (
@@ -332,9 +332,9 @@ export default function DashboardSection({
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-border bg-background/50 p-4 space-y-2">
-            <div className="flex items-center justify-between">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="min-w-0 rounded-2xl border border-border bg-background/50 p-4 space-y-2">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-bold text-foreground">
                 💳 Compras con TC en la App sin Cruzar
               </span>
@@ -356,7 +356,7 @@ export default function DashboardSection({
                     key={u.id}
                     className="flex items-center justify-between text-muted-foreground"
                   >
-                    <span className="truncate pr-2">
+                    <span className="min-w-0 truncate pr-2">
                       • {u.description} ({u.date})
                     </span>
                     <span className="font-mono font-semibold text-foreground shrink-0">
@@ -368,7 +368,7 @@ export default function DashboardSection({
             )}
           </div>
 
-          <div className="rounded-2xl border border-border bg-background/50 p-4 space-y-2">
+          <div className="min-w-0 rounded-2xl border border-border bg-background/50 p-4 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-bold text-foreground">
                 📐 Cómo funciona tu Calibración de Topes
@@ -385,9 +385,9 @@ export default function DashboardSection({
         </div>
       </section>
 
-      <div className="grid gap-8 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-5">
         {/* Budget by category */}
-        <section className="lg:col-span-3">
+        <section className="min-w-0 lg:col-span-3">
           <h2 className="mb-4 font-display text-lg font-bold">
             Presupuesto por categoría
           </h2>
@@ -401,7 +401,7 @@ export default function DashboardSection({
         </section>
 
         {/* Recent */}
-        <section className="lg:col-span-2">
+        <section className="min-w-0 lg:col-span-2">
           <h2 className="mb-4 font-display text-lg font-bold">
             Movimientos recientes
           </h2>
