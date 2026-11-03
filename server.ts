@@ -46,6 +46,7 @@ import {
   runAssistantModel,
 } from "./server/assistantService";
 import type { AssistantMedia } from "./server/assistantService";
+import { handleAssistantMessage } from "./server/assistantRoute";
 
 dotenv.config();
 
@@ -651,6 +652,24 @@ async function startServer() {
     } catch (err) {
       console.error("[spaces] Error in /api/spaces/request-access:", err);
       res.status(500).json({ error: "request_access_failed" });
+    }
+  });
+
+  // API Route: in-app Asistente message (text only for now). The caller comes
+  // from the verified ID token and must be a member of the space in the body.
+  app.post("/api/assistant/messages", firebaseProjectGuard, async (req, res) => {
+    if (!rateLimit(req, res)) return;
+    const caller = await requireIdToken(req, res);
+    if (!caller) return;
+    try {
+      const result = await handleAssistantMessage(
+        { getDb: getAdminFirestore, generate: generateWithGemini },
+        { uid: caller.uid, body: req.body }
+      );
+      res.status(result.httpStatus).json(result.body);
+    } catch (err) {
+      console.error("[assistant] Error in /api/assistant/messages:", err);
+      res.status(500).json({ error: "assistant_failed" });
     }
   });
 
