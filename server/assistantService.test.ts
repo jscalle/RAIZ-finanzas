@@ -6,7 +6,6 @@ import {
   buildAssistantPrompt,
   buildDrafts,
   runAssistantModel,
-  savePendingDrafts,
 } from './assistantService';
 import type { AssistantContext } from './assistantService';
 
@@ -159,18 +158,5 @@ describe('assertSpaceMember', () => {
     for (const id of ['.', '..', '__reserved__']) {
       expect(await assertSpaceMember(() => db, id, 'owner')).toEqual({ ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } });
     }
-  });
-});
-
-describe('savePendingDrafts', () => {
-  it('writes each draft under spaces/{id}/pending_transactions/{draftId}', async () => {
-    const { db, writes } = createDb({});
-    const drafts = buildDrafts({
-      transactions: [{ type: 'EXPENSE', amount: 5, category: 'Comida' }, { type: 'EXPENSE', amount: 6, category: 'Hogar' }],
-      topics, spaceId: 'espacio', text: '', todayISO: '2026-11-15', idPrefix: 'as_', now,
-    });
-    await savePendingDrafts(() => db, 'espacio', drafts);
-    expect(writes.map((w) => w.path)).toEqual(drafts.map((d) => `spaces/espacio/pending_transactions/${d.id}`));
-    expect(writes[0].data).toEqual(drafts[0]);
   });
 });

@@ -46,7 +46,11 @@ import {
   runAssistantModel,
 } from "./server/assistantService";
 import type { AssistantMedia } from "./server/assistantService";
-import { assistantBodyParser, handleAssistantMessage } from "./server/assistantRoute";
+import {
+  assistantBodyParser,
+  handleAssistantMessage,
+  registerAssistantRoutes,
+} from "./server/assistantRoute";
 import { createQuota } from "./server/assistantMedia";
 import { createApiCors, parseAllowedOrigins } from "./server/cors";
 
@@ -669,20 +673,15 @@ async function startServer() {
 
   // API Route: in-app Asistente message (text and one attachment). The caller comes
   // from the verified ID token and must be a member of the space in the body.
-  app.post("/api/assistant/messages", firebaseProjectGuard, async (req, res) => {
-    if (!rateLimit(req, res)) return;
-    const caller = await requireIdToken(req, res);
-    if (!caller) return;
-    try {
-      const result = await handleAssistantMessage(
+  registerAssistantRoutes(app, {
+    guard: firebaseProjectGuard,
+    rateLimit,
+    requireIdToken,
+    handler: (input) =>
+      handleAssistantMessage(
         { getDb: getAdminFirestore, generate: generateWithGemini, limits: assistantLimits },
-        { uid: caller.uid, body: req.body }
-      );
-      res.status(result.httpStatus).json(result.body);
-    } catch (err) {
-      console.error("[assistant] Error in /api/assistant/messages:", err);
-      res.status(500).json({ error: "assistant_failed" });
-    }
+        input
+      ),
   });
 
   // Telegram Bot API webhook. telegramWebhookGuard rejects (401) any update

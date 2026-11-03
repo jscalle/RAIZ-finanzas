@@ -197,15 +197,6 @@ export function buildDrafts(input: {
   });
 }
 
-export async function savePendingDrafts(
-  getDb: () => Firestore,
-  spaceId: string,
-  drafts: AssistantDraft[]
-): Promise<void> {
-  const col = getDb().collection('spaces').doc(spaceId).collection('pending_transactions');
-  await Promise.all(drafts.map((d) => col.doc(d.id).set(d)));
-}
-
 export type MemberCheck =
   | { ok: true; space: SpaceDoc }
   | { ok: false; httpStatus: 400 | 403 | 404; body: { error: string } };
