@@ -2209,7 +2209,7 @@ export default function App() {
                 items: [
                   {
                     id: 'dashboard',
-                    label: 'Resumen',
+                    label: 'Dashboard',
                     hint: 'Tu panorama',
                     icon: LayoutDashboard,
                   },
@@ -2272,6 +2272,7 @@ export default function App() {
                 return (
                   <button
                     key={tab.id}
+                    aria-current={isSelected ? 'page' : undefined}
                     onClick={() => setActiveTab(tab.id as typeof activeTab)}
                     className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
                       isSelected
@@ -2365,7 +2366,7 @@ export default function App() {
       <div className="fixed bottom-0 left-0 right-0 min-h-[76px] bg-card border-t border-border flex items-center justify-around z-40 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] shadow-[0_-10px_40px_rgba(0,0,0,0.15)] md:hidden">
         {(
           [
-            { id: 'dashboard', label: 'Resumen', icon: LayoutDashboard },
+            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
             { id: 'expenses', label: 'Gastos', icon: TrendingDown },
             { id: 'assistant', label: 'Asistente', icon: Sprout },
             { id: 'savings', label: 'Metas', icon: Target },
@@ -2376,6 +2377,7 @@ export default function App() {
           return (
             <button
               key={tab.id}
+              aria-current={isSelected ? 'page' : undefined}
               onClick={() => {
                 setActiveTab(tab.id as typeof activeTab);
                 setIsMoreSheetOpen(false);
@@ -2384,11 +2386,15 @@ export default function App() {
                 isSelected ? 'text-primary font-bold' : 'text-muted-foreground'
               }`}
             >
-              <span className="relative">
+              <span
+                className={`relative flex h-8 w-14 items-center justify-center rounded-full transition-colors ${
+                  isSelected ? 'bg-primary text-primary-foreground' : ''
+                }`}
+              >
                 <Icon className="h-5 w-5 shrink-0" />
                 {tab.id === 'assistant' && pendingTransactions.length > 0 && (
                   <span
-                    className="absolute -right-3 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground"
+                    className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-card bg-rose-500 px-1 text-[10px] font-bold text-white"
                     aria-label={`${pendingTransactions.length} por confirmar`}
                   >
                     {pendingTransactions.length}
@@ -2402,6 +2408,13 @@ export default function App() {
           );
         })}
         <button
+          aria-current={
+            activeTab === 'incomes' ||
+            activeTab === 'topics' ||
+            activeTab === 'sync_settings'
+              ? 'page'
+              : undefined
+          }
           onClick={() => setIsMoreSheetOpen(!isMoreSheetOpen)}
           className={`flex flex-col items-center justify-center w-full py-1 space-y-1 transition-colors ${
             isMoreSheetOpen ||
@@ -2412,7 +2425,17 @@ export default function App() {
               : 'text-muted-foreground'
           }`}
         >
-          <Menu className="h-5 w-5 shrink-0" />
+          <span
+            className={`flex h-8 w-14 items-center justify-center rounded-full transition-colors ${
+              activeTab === 'incomes' ||
+              activeTab === 'topics' ||
+              activeTab === 'sync_settings'
+                ? 'bg-primary text-primary-foreground'
+                : ''
+            }`}
+          >
+            <Menu className="h-5 w-5 shrink-0" />
+          </span>
           <span className="text-[11px] font-medium leading-none">Más</span>
         </button>
       </div>

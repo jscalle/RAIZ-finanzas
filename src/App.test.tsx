@@ -233,6 +233,40 @@ describe('App integration', () => {
     ).toBeInTheDocument();
   });
 
+  it('calls the first section Dashboard in both menus, not Resumen', () => {
+    render(<App />);
+    expect(
+      screen.getAllByRole('button', { name: /Dashboard/i }).length
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByRole('button', { name: /Resumen/i })).toBeNull();
+  });
+
+  it('marks the current section in the bottom bar with its own color and aria-current', async () => {
+    render(<App />);
+    const bottomButtons = (name: RegExp) =>
+      screen
+        .getAllByRole('button', { name })
+        .filter(
+          (b) =>
+            b.className.includes('flex-col') &&
+            b.closest('[class*="fixed bottom-0"]')
+        );
+    const dashboard = () => bottomButtons(/Dashboard/i)[0];
+    const expenses = () => bottomButtons(/Gastos/i)[0];
+
+    expect(dashboard()).toHaveAttribute('aria-current', 'page');
+    expect(dashboard().querySelector('span.bg-primary')).not.toBeNull();
+    expect(expenses()).not.toHaveAttribute('aria-current');
+    expect(expenses().querySelector('span.bg-primary')).toBeNull();
+
+    fireEvent.click(expenses());
+    expect(await screen.findByText('Control de Gastos')).toBeInTheDocument();
+    expect(expenses()).toHaveAttribute('aria-current', 'page');
+    expect(expenses().querySelector('span.bg-primary')).not.toBeNull();
+    expect(dashboard()).not.toHaveAttribute('aria-current');
+    expect(dashboard().querySelector('span.bg-primary')).toBeNull();
+  });
+
   it('opens the Asistente tab, which asks for the cloud while signed out', async () => {
     render(<App />);
     // Present in the desktop sidebar and in the mobile bottom nav.
