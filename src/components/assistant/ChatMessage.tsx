@@ -132,7 +132,7 @@ export function ChatMessage({
       message.attachment?.kind === 'image' ? ImageIcon : Mic;
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-base text-primary-foreground">
+        <div className="max-w-[92%] rounded-2xl rounded-br-md bg-primary px-3 py-2.5 text-base text-primary-foreground md:max-w-[85%] md:px-4 md:py-3">
           {message.attachment && (
             <p className="mb-1 flex items-center gap-1.5 text-sm opacity-90">
               <AttachmentIcon className="h-4 w-4" aria-hidden="true" />
@@ -163,13 +163,13 @@ export function ChatMessage({
   return (
     <div className="flex items-end gap-2">
       <div
-        className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+        className="mb-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary md:flex"
         aria-hidden="true"
       >
         <Sprout className="h-4 w-4" />
       </div>
       <div
-        className={`max-w-[85%] rounded-2xl rounded-bl-md border px-4 py-3 text-base ${tone}`}
+        className={`max-w-[94%] rounded-2xl rounded-bl-md border px-3 py-2.5 text-base md:max-w-[85%] md:px-4 md:py-3 ${tone}`}
       >
         {message.kind === 'error' && (
           <AlertCircle className="mb-1 h-5 w-5" aria-label="Error" />
@@ -180,7 +180,7 @@ export function ChatMessage({
         {message.kind === 'draft' ? (
           (renderDraft?.(message) ?? <DraftSummary message={message} />)
         ) : (
-          <p className="break-words">{renderChatText(message.text)}</p>
+          <div className="break-words">{renderChatText(message.text)}</div>
         )}
       </div>
     </div>
