@@ -37,6 +37,7 @@ const SavingsSection = lazy(() => import('./components/SavingsSection'));
 const TopicsConfig = lazy(() => import('./components/TopicsConfig'));
 const AssistantTab = lazy(() => import('./components/AssistantTab'));
 import EditPendingTransactionModal from './components/EditPendingTransactionModal';
+import { FloatingAssistantButton } from './components/FloatingAssistantButton';
 
 export const getColombiaDateISO = (): string => {
   try {
@@ -2439,6 +2440,15 @@ export default function App() {
           <span className="text-[11px] font-medium leading-none">Más</span>
         </button>
       </div>
+
+      {/* Floating assistant bubble: draggable, over every screen except the assistant itself */}
+      <FloatingAssistantButton
+        onOpen={() => setActiveTab('assistant')}
+        badgeCount={pendingTransactions.length}
+        hidden={
+          activeTab === 'assistant' || isMoreSheetOpen || !!editingPendingTx
+        }
+      />
 
       {/* MORE SHEET MODAL */}
       <AnimatePresence>

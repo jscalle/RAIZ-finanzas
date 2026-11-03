@@ -267,6 +267,23 @@ describe('App integration', () => {
     expect(dashboard().querySelector('span.bg-primary')).toBeNull();
   });
 
+  it('floats the assistant bubble over every screen, opens the assistant from it and hides there', async () => {
+    render(<App />);
+    const bubble = () =>
+      screen.queryByRole('button', { name: /Abrir el asistente/ });
+    expect(bubble()).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Gastos/i })[0]);
+    expect(await screen.findByText('Control de Gastos')).toBeInTheDocument();
+    expect(bubble()).toBeInTheDocument();
+
+    fireEvent.click(bubble()!);
+    expect(
+      await screen.findByText(/Para usar el Asistente necesitas la nube/i)
+    ).toBeInTheDocument();
+    expect(bubble()).toBeNull();
+  });
+
   it('opens the Asistente tab, which asks for the cloud while signed out', async () => {
     render(<App />);
     // Present in the desktop sidebar and in the mobile bottom nav.
