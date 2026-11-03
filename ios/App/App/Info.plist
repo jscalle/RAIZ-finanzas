@@ -56,6 +56,12 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>RAÍZ usa la cámara para que puedas tomarle una foto a una factura o recibo y el asistente registre el gasto.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>RAÍZ usa el micrófono para que puedas contarle un gasto al asistente con una nota de voz.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>RAÍZ lee la foto que elijas de tu galería para que el asistente registre el gasto de una factura o recibo.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

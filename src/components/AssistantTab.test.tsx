@@ -254,6 +254,146 @@ describe('AssistantTab', () => {
     expect(box).toHaveValue('hola');
   });
 
+  describe('attachments', () => {
+    const jpeg = () =>
+      new File([new Uint8Array([0xff, 0xd8, 0xff])], 'factura.jpg', {
+        type: 'image/jpeg',
+      });
+    const openAndPick = (file: File, option = 'Elegir de la galería') => {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Adjuntar foto o audio' })
+      );
+      const input = screen
+        .getByText(option)
+        .closest('label')!
+        .querySelector('input')!;
+      fireEvent.change(input, { target: { files: [file] } });
+    };
+
+    it('opens the attach sheet from the plus button and from the invoice chip', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([]));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Subir foto de una factura' })
+      );
+      expect(
+        screen.getByRole('dialog', { name: 'Adjuntar' })
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
+      expect(screen.queryByRole('dialog')).toBeNull();
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Adjuntar foto o audio' })
+      );
+      expect(
+        screen.getByRole('dialog', { name: 'Adjuntar' })
+      ).toBeInTheDocument();
+    });
+
+    it('shows the chosen photo as ready to send and sends it with no text', async () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      expect(screen.getByText('factura.jpg')).toBeInTheDocument();
+      expect(screen.getByText(/Listo para enviar/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Enviar' })).not.toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      await waitFor(() =>
+        expect(h.send).toHaveBeenCalledWith('espacio_familia', {
+          attachment: { mime: 'image/jpeg', dataBase64: '/9j/' },
+        })
+      );
+      await waitFor(() => expect(screen.queryByText('factura.jpg')).toBeNull());
+    });
+
+    it('sends the text together with the attachment', async () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      fireEvent.change(screen.getByLabelText('Escribe tu mensaje'), {
+        target: { value: 'Almuerzo' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      await waitFor(() =>
+        expect(h.send).toHaveBeenCalledWith('espacio_familia', {
+          text: 'Almuerzo',
+          attachment: { mime: 'image/jpeg', dataBase64: '/9j/' },
+        })
+      );
+    });
+
+    it('refuses video and unsupported audio with an explanation, and keeps nothing attached', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(new File(['x'], 'clip.mp4', { type: 'video/mp4' }));
+      expect(screen.getByRole('alert')).toHaveTextContent('video');
+      expect(screen.queryByText(/Listo para enviar/)).toBeNull();
+      openAndPick(
+        new File(['x'], 'PTT-1.opus', { type: 'audio/ogg' }),
+        'Subir audio'
+      );
+      expect(screen.getByRole('alert')).toHaveTextContent('audio');
+      expect(h.send).not.toHaveBeenCalled();
+    });
+
+    it('shows "Subiendo…" while uploading and hands over to the thread once it shows the message', async () => {
+      let resolve: (v: unknown) => void = () => {};
+      h.send.mockReturnValue(new Promise((r) => (resolve = r)));
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      expect(await screen.findByText(/Subiendo…/)).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Quitar archivo adjunto' })
+      ).toBeDisabled();
+
+      act(() =>
+        emit([
+          t('u0', { status: 'done' }),
+          t('u1', {
+            status: 'analyzing',
+            attachment: { kind: 'image', mimeType: 'image/jpeg', sizeBytes: 3 },
+          }),
+        ])
+      );
+      expect(screen.queryByText('factura.jpg')).toBeNull();
+      expect(screen.getByRole('status')).toHaveTextContent('Analizando…');
+      resolve({ ok: true, messageId: 'm' });
+    });
+
+    it('keeps the photo and the text when sending fails, so the user can try again', async () => {
+      h.send.mockResolvedValue({
+        ok: false,
+        message:
+          'No pude conectar con el asistente. Revisa tu conexión e intenta de nuevo.',
+      });
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      fireEvent.change(screen.getByLabelText('Escribe tu mensaje'), {
+        target: { value: 'Mercado' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
+      expect(await screen.findByText(/No pude conectar/)).toBeInTheDocument();
+      expect(screen.getByText('factura.jpg')).toBeInTheDocument();
+      expect(screen.getByLabelText('Escribe tu mensaje')).toHaveValue(
+        'Mercado'
+      );
+    });
+
+    it('lets the user remove the attachment before sending', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Quitar archivo adjunto' })
+      );
+      expect(screen.queryByText('factura.jpg')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
+    });
+  });
+
   it('shows a visible message when the conversation cannot be loaded', () => {
     render(<AssistantTab {...props} />);
     act(() => fail({ code: 'permission-denied' }));

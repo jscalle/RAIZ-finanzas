@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CloudOff, Loader2, Sprout } from 'lucide-react';
 import { sendAssistantMessage } from '../lib/firebase';
+import { fileToBase64, validateAttachmentFile } from '../lib/attachments';
+import type { PickedAttachment } from '../lib/attachments';
 import { useAssistantThread } from '../hooks/useAssistantThread';
 import type { PendingTransaction } from '../types';
 import { ChatMessage } from './assistant/ChatMessage';
 import { DraftCard } from './assistant/DraftCard';
+import { AttachSheet } from './assistant/AttachSheet';
 import { Composer } from './assistant/Composer';
 
 interface Props {
@@ -26,6 +29,7 @@ interface Props {
 const CHIPS = [
   { label: 'Registrar un gasto', fill: 'Gasté  en ' },
   { label: '¿Cuánto llevo este mes?', send: '¿Cuánto llevo este mes?' },
+  { label: 'Subir foto de una factura', attach: true },
 ] as const;
 
 export default function AssistantTab({
@@ -49,6 +53,13 @@ export default function AssistantTab({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [attachment, setAttachment] = useState<PickedAttachment | null>(null);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // How many messages the thread had when the last send started: once it has more, the
+  // server already shows the message (as "analyzing") and the upload pill can go away.
+  const [sentCount, setSentCount] = useState(0);
+  const previewUrl = useRef<string | undefined>(undefined);
   const pendingById = useMemo(
     () => new Map(pendingTransactions.map((tx) => [tx.id, tx])),
     [pendingTransactions]
@@ -66,24 +77,87 @@ export default function AssistantTab({
     endRef.current?.scrollIntoView?.({ block: 'end' });
   }, [messages.length]);
 
+  const clearAttachment = useCallback(() => {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    previewUrl.current = undefined;
+    setAttachment(null);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (previewUrl.current) URL.revokeObjectURL(previewUrl.current);
+    },
+    []
+  );
+
+  const pickFile = useCallback(
+    (file: File) => {
+      const check = validateAttachmentFile(file);
+      if (!check.ok) {
+        setAttachError(check.message);
+        return;
+      }
+      clearAttachment();
+      setAttachError(null);
+      setSendError(null);
+      if (check.kind === 'image' && typeof URL.createObjectURL === 'function') {
+        previewUrl.current = URL.createObjectURL(file);
+      }
+      setAttachment({
+        file,
+        kind: check.kind,
+        mime: check.mime,
+        previewUrl: previewUrl.current,
+      });
+    },
+    [clearAttachment]
+  );
+
   const send = useCallback(
     async (raw: string) => {
       const message = raw.trim();
-      if (!message || sending) return;
+      if ((!message && !attachment) || sending) return;
       setSending(true);
       setSendError(null);
+      setAttachError(null);
+      setSentCount(messages.length);
       setText('');
+
+      let encoded: { mime: string; dataBase64: string } | undefined;
+      if (attachment) {
+        try {
+          encoded = {
+            mime: attachment.mime,
+            dataBase64: await fileToBase64(attachment.file),
+          };
+        } catch {
+          setSending(false);
+          setSendError('No pude leer el archivo. Elígelo de nuevo.');
+          setText((current) => (current ? current : message));
+          return;
+        }
+      }
+
       const result = await sendAssistantMessage(currentSpaceId, {
-        text: message,
+        ...(message ? { text: message } : {}),
+        ...(encoded ? { attachment: encoded } : {}),
       });
       setSending(false);
       if (!result.ok) {
         setSendError(result.message);
         setText((current) => (current ? current : message));
+        return;
       }
+      clearAttachment();
     },
-    [currentSpaceId, sending]
+    [attachment, clearAttachment, currentSpaceId, messages.length, sending]
   );
+
+  // While the upload is in flight and the thread does not show the message yet.
+  const uploading =
+    sending && attachment !== null && messages.length <= sentCount;
+  const shownAttachment =
+    sending && messages.length > sentCount ? null : attachment;
 
   if (!enabled) {
     return (
@@ -160,7 +234,11 @@ export default function AssistantTab({
                   key={chip.label}
                   type="button"
                   onClick={() =>
-                    'send' in chip ? void send(chip.send) : setText(chip.fill)
+                    'send' in chip
+                      ? void send(chip.send)
+                      : 'attach' in chip
+                        ? setSheetOpen(true)
+                        : setText(chip.fill)
                   }
                   className="min-h-[48px] rounded-full border border-primary/30 bg-primary/10 px-4 text-base font-semibold text-primary"
                 >
@@ -195,12 +273,12 @@ export default function AssistantTab({
         <div ref={endRef} />
       </div>
 
-      {sendError && (
+      {(attachError ?? sendError) && (
         <p
           role="alert"
           className="border-t border-border bg-red-50 px-4 py-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-100"
         >
-          {sendError}
+          {attachError ?? sendError}
         </p>
       )}
       <Composer
@@ -208,6 +286,15 @@ export default function AssistantTab({
         onChange={setText}
         onSend={() => void send(text)}
         sending={sending}
+        attachment={shownAttachment}
+        uploading={uploading}
+        onOpenAttach={() => setSheetOpen(true)}
+        onRemoveAttachment={clearAttachment}
+      />
+      <AttachSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        onPick={pickFile}
       />
     </section>
   );
