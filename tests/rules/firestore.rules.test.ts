@@ -100,6 +100,15 @@ beforeEach(async () => {
       id: 'tg_1',
       amount: 50,
     });
+    for (const uid of [OWNER, MEMBER]) {
+      await setDoc(doc(db, 'spaces', SPACE, 'assistant_threads', uid, 'messages', 'm1'), {
+        id: 'm1',
+        role: 'user',
+        kind: 'text',
+        text: `hola de ${uid}`,
+        createdAt: '2026-11-01T00:00:00.000Z',
+      });
+    }
     await setDoc(doc(db, 'spaces', OTHER_SPACE), {
       ...spaceDoc(STRANGER, [STRANGER]),
       id: OTHER_SPACE,
@@ -375,6 +384,39 @@ describe('spaces/{spaceId}/pending_transactions', () => {
       setDoc(doc(anonymous(), ...path, 'tg_4'), { id: 'tg_4' })
     );
     await assertFails(getDoc(doc(anonymous(), ...path, 'tg_1')));
+  });
+});
+
+describe('spaces/{spaceId}/assistant_threads/{uid}/messages', () => {
+  const thread = (uid: string) => ['spaces', SPACE, 'assistant_threads', uid, 'messages'] as const;
+
+  it('lets a member read and list only its own thread', async () => {
+    await assertSucceeds(getDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1')));
+    await assertSucceeds(getDocs(collection(asUser(MEMBER), ...thread(MEMBER))));
+    await assertSucceeds(getDoc(doc(asUser(OWNER), ...thread(OWNER), 'm1')));
+  });
+
+  it('keeps other users out of a thread, even the space owner', async () => {
+    await assertFails(getDoc(doc(asUser(OWNER), ...thread(MEMBER), 'm1')));
+    await assertFails(getDocs(collection(asUser(OWNER), ...thread(MEMBER))));
+    await assertFails(getDoc(doc(asUser(MEMBER), ...thread(OWNER), 'm1')));
+    await assertFails(getDoc(doc(asUser(STRANGER), ...thread(MEMBER), 'm1')));
+    await assertFails(getDoc(doc(anonymous(), ...thread(MEMBER), 'm1')));
+  });
+
+  it('denies every client write: only the server writes threads', async () => {
+    const msg = { id: 'm2', role: 'user', kind: 'text', text: 'x', createdAt: '2026-11-01T00:00:01.000Z' };
+    await assertFails(setDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm2'), msg));
+    await assertFails(updateDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1'), { text: 'changed' }));
+    await assertFails(deleteDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1')));
+    await assertFails(setDoc(doc(asUser(OWNER), ...thread(MEMBER), 'm2'), msg));
+    await assertFails(setDoc(doc(anonymous(), ...thread(MEMBER), 'm2'), msg));
+  });
+
+  it('does not let members create or read the thread parent documents', async () => {
+    const parent = ['spaces', SPACE, 'assistant_threads', MEMBER] as const;
+    await assertFails(setDoc(doc(asUser(MEMBER), ...parent), { x: 1 }));
+    await assertFails(getDoc(doc(asUser(MEMBER), ...parent)));
   });
 });
 

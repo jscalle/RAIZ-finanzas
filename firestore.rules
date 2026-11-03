@@ -120,10 +120,17 @@ service cloud.firestore {
         allow read, write: if isSpaceMember(spaceId);
       }
 
+      // Assistant conversation threads. The backend writes them with the Admin SDK;
+      // a member can only read its own thread, and no client can write.
+      match /assistant_threads/{threadUid}/messages/{messageId} {
+        allow read: if isSpaceMember(spaceId) && request.auth.uid == threadUid;
+        allow write: if false;
+      }
+
       // Data subcollections (topics, incomes, expenses, goals, ...).
       match /{subcollection}/{documentId} {
         allow read, write: if
-          !(subcollection in ['access_requests', 'pending_transactions']) &&
+          !(subcollection in ['access_requests', 'pending_transactions', 'assistant_threads']) &&
           canAccessSpace(spaceId);
       }
     }
