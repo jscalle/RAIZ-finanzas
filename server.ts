@@ -46,7 +46,8 @@ import {
   runAssistantModel,
 } from "./server/assistantService";
 import type { AssistantMedia } from "./server/assistantService";
-import { handleAssistantMessage } from "./server/assistantRoute";
+import { assistantBodyParser, handleAssistantMessage } from "./server/assistantRoute";
+import { createQuota } from "./server/assistantMedia";
 
 dotenv.config();
 
@@ -212,6 +213,12 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 20;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
+// Per-user caps for the in-app assistant (Gemini cost). In memory, so per instance.
+const assistantLimits = {
+  messages: createQuota({ windowMs: 60 * 60 * 1000, max: 40 }),
+  media: createQuota({ windowMs: 24 * 60 * 60 * 1000, max: 25 }),
+};
+
 function rateLimit(req: express.Request, res: express.Response): boolean {
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   const now = Date.now();
@@ -236,6 +243,8 @@ async function startServer() {
 
   // Trust the proxy hop so req.ip reflects the real client when deployed behind one.
   app.set("trust proxy", 1);
+  // Assistant routes keep their own 15 MB limit; this must come before the global parser.
+  app.use("/api/assistant", ...assistantBodyParser());
   app.use(express.json({ limit: "50mb" }));
 
   // API Route: Check Server Health
@@ -655,7 +664,7 @@ async function startServer() {
     }
   });
 
-  // API Route: in-app Asistente message (text only for now). The caller comes
+  // API Route: in-app Asistente message (text and one attachment). The caller comes
   // from the verified ID token and must be a member of the space in the body.
   app.post("/api/assistant/messages", firebaseProjectGuard, async (req, res) => {
     if (!rateLimit(req, res)) return;
@@ -663,7 +672,7 @@ async function startServer() {
     if (!caller) return;
     try {
       const result = await handleAssistantMessage(
-        { getDb: getAdminFirestore, generate: generateWithGemini },
+        { getDb: getAdminFirestore, generate: generateWithGemini, limits: assistantLimits },
         { uid: caller.uid, body: req.body }
       );
       res.status(result.httpStatus).json(result.body);

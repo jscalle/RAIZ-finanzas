@@ -1,7 +1,11 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Firestore } from 'firebase-admin/firestore';
-import { handleAssistantMessage } from './assistantRoute';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import { assistantBodyParser, handleAssistantMessage } from './assistantRoute';
+import type { AssistantRouteDeps } from './assistantRoute';
+import { createQuota } from './assistantMedia';
 
 type Doc = { id: string; data: () => Record<string, unknown> };
 const doc = (id: string, data: Record<string, unknown>): Doc => ({ id, data: () => data });
@@ -31,10 +35,10 @@ function createDb() {
   return { db, writes };
 }
 
-const run = (generate: any, body: unknown, uid = 'kid') => {
+const run = (generate: any, body: unknown, uid = 'kid', limits?: AssistantRouteDeps['limits']) => {
   const { db, writes } = createDb();
   const now = new Date('2026-11-15T17:00:00Z');
-  return handleAssistantMessage({ getDb: () => db, generate, now: () => now }, { uid, body }).then((res) => ({
+  return handleAssistantMessage({ getDb: () => db, generate, now: () => now, limits }, { uid, body }).then((res) => ({
     ...res,
     writes,
   }));
@@ -90,11 +94,45 @@ describe('handleAssistantMessage', () => {
     expect(res.writes).toEqual([]);
   });
 
-  it('rejects attachments until media support exists', async () => {
+  const WEBM = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...new Array(32).fill(0)]).toString('base64');
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...new Array(32).fill(0)]).toString('base64');
+
+  it('sends a voice note to the model with the type found in its bytes, even without text', async () => {
+    const generate = vi.fn().mockResolvedValue(JSON.stringify({ intent: 'QUERY', chatResponse: 'ok', transactions: [] }));
+    const res = await run(generate, { spaceId: 'mine', attachment: { mime: 'audio/webm;codecs=opus', dataBase64: WEBM } });
+    expect(res.httpStatus).toBe(200);
+    const { contents } = generate.mock.calls[0][0];
+    expect(contents[0]).toEqual({ inlineData: { mimeType: 'audio/webm', data: WEBM } });
+  });
+
+  it('rejects an invalid attachment before touching the database or the model', async () => {
     const generate = vi.fn();
-    const res = await run(generate, { spaceId: 'mine', text: 'foto', attachment: { mime: 'image/png', dataBase64: 'AAAA' } });
-    expect(res).toMatchObject({ httpStatus: 400, body: { error: 'attachment_not_supported' } });
+    expect(await run(generate, { spaceId: 'mine', text: 'x', attachment: { mime: 'audio/webm', dataBase64: PNG } })).toMatchObject({ httpStatus: 400, body: { error: 'attachment_type_mismatch' } });
+    expect(await run(generate, { spaceId: 'mine', text: 'x', attachment: { mime: 'video/mp4', dataBase64: WEBM } })).toMatchObject({ httpStatus: 400, body: { error: 'attachment_type_not_allowed' } });
+    expect(await run(generate, { spaceId: 'mine', attachment: 'nope' })).toMatchObject({ httpStatus: 400, body: { error: 'attachment_invalid' } });
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('answers 429 with a retry time when the per-user caps are reached', async () => {
+    const ok = async () => JSON.stringify({ intent: 'QUERY', chatResponse: 'ok', transactions: [] });
+    const limits = {
+      messages: createQuota({ windowMs: 60_000, max: 3, now: () => 0 }),
+      media: createQuota({ windowMs: 86_400_000, max: 1, now: () => 0 }),
+    };
+    const photo = { spaceId: 'mine', text: 'x', attachment: { mime: 'image/png', dataBase64: PNG } };
+    expect((await run(ok, photo, 'kid', limits)).httpStatus).toBe(200);
+    expect(await run(ok, photo, 'kid', limits)).toMatchObject({ httpStatus: 429, body: { error: 'media_quota_exceeded', retryAfterSeconds: 86400 } });
+    expect((await run(ok, { spaceId: 'mine', text: 'hola' }, 'kid', limits)).httpStatus).toBe(200);
+    expect(await run(ok, { spaceId: 'mine', text: 'otra' }, 'kid', limits)).toMatchObject({ httpStatus: 429, body: { error: 'rate_limited', retryAfterSeconds: 60 } });
+    // another user is not affected
+    expect((await run(ok, { spaceId: 'mine', text: 'hola' }, 'owner', limits)).httpStatus).toBe(200);
+  });
+
+  it('does not count quota for callers outside the space', async () => {
+    const messages = createQuota({ windowMs: 60_000, max: 1, now: () => 0 });
+    const limits = { messages, media: createQuota({ windowMs: 1000, max: 1 }) };
+    await run(vi.fn(), { spaceId: 'mine', text: 'hola' }, 'stranger', limits);
+    expect(messages.take('stranger')).toEqual({ allowed: true });
   });
 
   it('validates the body: shape, text and space id', async () => {
@@ -106,5 +144,46 @@ describe('handleAssistantMessage', () => {
     expect(await run(generate, { spaceId: 'a/b', text: 'hola' })).toMatchObject({ httpStatus: 400, body: { error: 'invalid_space_id' } });
     expect(await run(generate, { spaceId: 'otro', text: 'hola' })).toMatchObject({ httpStatus: 404, body: { error: 'space_not_found' } });
     expect(generate).not.toHaveBeenCalled();
+  });
+});
+
+describe('assistantBodyParser', () => {
+  async function withServer(fn: (url: string) => Promise<void>) {
+    const app = express();
+    app.use('/api/assistant', ...assistantBodyParser());
+    app.use(express.json({ limit: '50mb' }));
+    app.post('/api/assistant/echo', (req, res) => res.json({ length: req.body.t.length }));
+    app.post('/other', (req, res) => res.json({ length: req.body.t.length }));
+    const server = app.listen(0);
+    try {
+      await fn(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+    } finally {
+      server.close();
+    }
+  }
+  const post = (url: string, body: string) =>
+    fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+
+  it('keeps a 15 MB limit on the assistant routes and answers JSON errors', async () => {
+    await withServer(async (url) => {
+      const big = JSON.stringify({ t: 'a'.repeat(16 * 1024 * 1024) });
+      const tooLarge = await post(`${url}/api/assistant/echo`, big);
+      expect(tooLarge.status).toBe(413);
+      expect(await tooLarge.json()).toEqual({ error: 'payload_too_large' });
+
+      const ok = await post(`${url}/api/assistant/echo`, JSON.stringify({ t: 'a'.repeat(12 * 1024 * 1024) }));
+      expect(ok.status).toBe(200);
+
+      const broken = await post(`${url}/api/assistant/echo`, '{not json');
+      expect(broken.status).toBe(400);
+      expect(await broken.json()).toEqual({ error: 'invalid_json' });
+    });
+  });
+
+  it('leaves the global 50 MB limit untouched for other routes', async () => {
+    await withServer(async (url) => {
+      const res = await post(`${url}/other`, JSON.stringify({ t: 'a'.repeat(20 * 1024 * 1024) }));
+      expect(res.status).toBe(200);
+    });
   });
 });
