@@ -39,6 +39,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import { resolveAuthDomain } from './authDomain';
 import { describeAssistantError } from './assistantErrors';
 import type { ThreadMessage } from '../types';
+import { starterTopics } from '../starterTopics';
 
 // Dynamic Firebase Configuration prioritizing env variables or default project config
 const metaEnv =
@@ -518,6 +519,19 @@ export const getOrCreateSpace = async (
     createdAt: new Date().toISOString(),
   };
   await setDoc(spaceRef, newSpace);
+
+  // Every new space starts with a basic set of categories so the assistant and the forms have
+  // something to classify with. This runs after the space exists (the rules check membership)
+  // and never blocks creating the space: the user can always add categories by hand.
+  try {
+    const batch = writeBatch(db);
+    for (const topic of starterTopics) {
+      batch.set(doc(db, 'spaces', cleanId, 'topics', topic.id), topic);
+    }
+    await batch.commit();
+  } catch (error) {
+    console.warn('Could not save the starter categories:', error);
+  }
   return newSpace;
 };
 

@@ -5,7 +5,7 @@
 // `firebase emulators:exec` and sets FIRESTORE_EMULATOR_HOST.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertFails,
   assertSucceeds,
@@ -23,8 +23,11 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
   type Firestore,
 } from 'firebase/firestore';
+
+import { starterTopics } from '../../src/starterTopics';
 
 const OWNER = 'ownerUid1';
 const MEMBER = 'memberUid2';
@@ -101,13 +104,16 @@ beforeEach(async () => {
       amount: 50,
     });
     for (const uid of [OWNER, MEMBER]) {
-      await setDoc(doc(db, 'spaces', SPACE, 'assistant_threads', uid, 'messages', 'm1'), {
-        id: 'm1',
-        role: 'user',
-        kind: 'text',
-        text: `hola de ${uid}`,
-        createdAt: '2026-11-01T00:00:00.000Z',
-      });
+      await setDoc(
+        doc(db, 'spaces', SPACE, 'assistant_threads', uid, 'messages', 'm1'),
+        {
+          id: 'm1',
+          role: 'user',
+          kind: 'text',
+          text: `hola de ${uid}`,
+          createdAt: '2026-11-01T00:00:00.000Z',
+        }
+      );
     }
     await setDoc(doc(db, 'spaces', OTHER_SPACE), {
       ...spaceDoc(STRANGER, [STRANGER]),
@@ -369,6 +375,36 @@ describe('spaces/{spaceId}/access_requests', () => {
   });
 });
 
+describe('starter categories of a new space', () => {
+  it('lets the creator save them right after creating its own space, and nobody else', async () => {
+    const uid = 'newuser1';
+    const spaceId = 'espacio_u_newuser1';
+    const db = asUser(uid);
+    await assertSucceeds(
+      setDoc(doc(db, 'spaces', spaceId), {
+        ...spaceDoc(uid, [uid]),
+        id: spaceId,
+      })
+    );
+
+    const batch = writeBatch(db);
+    for (const topic of starterTopics)
+      batch.set(doc(db, 'spaces', spaceId, 'topics', topic.id), topic);
+    await assertSucceeds(batch.commit());
+
+    const snap = await getDocs(collection(db, 'spaces', spaceId, 'topics'));
+    expect(snap.size).toBe(starterTopics.length);
+    await assertFails(
+      getDocs(collection(asUser(STRANGER), 'spaces', spaceId, 'topics'))
+    );
+    await assertFails(
+      setDoc(doc(asUser(STRANGER), 'spaces', spaceId, 'topics', 'x'), {
+        id: 'x',
+      })
+    );
+  });
+});
+
 describe('spaces/{spaceId}/pending_transactions', () => {
   it('allows members and denies non-members and anonymous callers', async () => {
     const path = ['spaces', SPACE, 'pending_transactions'] as const;
@@ -388,11 +424,14 @@ describe('spaces/{spaceId}/pending_transactions', () => {
 });
 
 describe('spaces/{spaceId}/assistant_threads/{uid}/messages', () => {
-  const thread = (uid: string) => ['spaces', SPACE, 'assistant_threads', uid, 'messages'] as const;
+  const thread = (uid: string) =>
+    ['spaces', SPACE, 'assistant_threads', uid, 'messages'] as const;
 
   it('lets a member read and list only its own thread', async () => {
     await assertSucceeds(getDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1')));
-    await assertSucceeds(getDocs(collection(asUser(MEMBER), ...thread(MEMBER))));
+    await assertSucceeds(
+      getDocs(collection(asUser(MEMBER), ...thread(MEMBER)))
+    );
     await assertSucceeds(getDoc(doc(asUser(OWNER), ...thread(OWNER), 'm1')));
   });
 
@@ -405,9 +444,21 @@ describe('spaces/{spaceId}/assistant_threads/{uid}/messages', () => {
   });
 
   it('denies every client write: only the server writes threads', async () => {
-    const msg = { id: 'm2', role: 'user', kind: 'text', text: 'x', createdAt: '2026-11-01T00:00:01.000Z' };
-    await assertFails(setDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm2'), msg));
-    await assertFails(updateDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1'), { text: 'changed' }));
+    const msg = {
+      id: 'm2',
+      role: 'user',
+      kind: 'text',
+      text: 'x',
+      createdAt: '2026-11-01T00:00:01.000Z',
+    };
+    await assertFails(
+      setDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm2'), msg)
+    );
+    await assertFails(
+      updateDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1'), {
+        text: 'changed',
+      })
+    );
     await assertFails(deleteDoc(doc(asUser(MEMBER), ...thread(MEMBER), 'm1')));
     await assertFails(setDoc(doc(asUser(OWNER), ...thread(MEMBER), 'm2'), msg));
     await assertFails(setDoc(doc(anonymous(), ...thread(MEMBER), 'm2'), msg));

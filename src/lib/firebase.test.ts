@@ -122,6 +122,7 @@ vi.mock('@capawesome/capacitor-google-sign-in', () => ({
 
 // Import after mocks are registered.
 import * as firebase from './firebase';
+import { starterTopics } from '../starterTopics';
 
 describe('firebase config and pure helpers', () => {
   beforeEach(() => {
@@ -630,6 +631,85 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
         { path: 'spaces/espacio_u_uidabc123' },
         space
       );
+    });
+
+    it('gives a new space the starter categories, after the space exists', async () => {
+      vi.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
+      const order: string[] = [];
+      vi.mocked(setDoc).mockImplementation((async () => {
+        order.push('space');
+      }) as never);
+      const batchSet = vi.fn();
+      vi.mocked(writeBatch).mockReturnValue({
+        set: batchSet,
+        commit: async () => {
+          order.push('topics');
+        },
+      } as never);
+
+      await firebase.getOrCreateSpace(
+        'espacio_u_uidabc123',
+        '',
+        ME,
+        'ana@example.com'
+      );
+
+      expect(order).toEqual(['space', 'topics']);
+      const written = batchSet.mock.calls.map(([ref, data]) => [
+        ref.path,
+        data.id,
+      ]);
+      expect(written).toHaveLength(starterTopics.length);
+      expect(written[0][0]).toBe(
+        `spaces/espacio_u_uidabc123/topics/${written[0][1]}`
+      );
+      expect(written.map(([, id]) => id)).toEqual(
+        starterTopics.map((t) => t.id)
+      );
+    });
+
+    it('still creates the space when the starter categories cannot be saved', async () => {
+      vi.mocked(getDoc).mockResolvedValue({ exists: () => false } as never);
+      vi.mocked(setDoc).mockResolvedValue(undefined);
+      vi.mocked(writeBatch).mockReturnValue({
+        set: vi.fn(),
+        commit: async () => {
+          throw permissionDenied();
+        },
+      } as never);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(
+        firebase.getOrCreateSpace(
+          'espacio_u_uidabc123',
+          '',
+          ME,
+          'ana@example.com'
+        )
+      ).resolves.toMatchObject({ id: 'espacio_u_uidabc123', ownerUid: ME });
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('does not touch the categories of an existing space', async () => {
+      vi.mocked(getDoc).mockResolvedValue({
+        exists: () => true,
+        data: () => ({
+          id: 'espacio_familia',
+          code: 'ESP-ABCDEFGH',
+          name: 'Familia',
+          ownerUid: 'owner',
+          members: ['owner'],
+          startingSavings: 0,
+        }),
+      } as never);
+      await firebase.getOrCreateSpace(
+        'espacio_familia',
+        '',
+        ME,
+        'ana@example.com'
+      );
+      expect(writeBatch).not.toHaveBeenCalled();
     });
 
     it('never adds the caller to an existing space members', async () => {
