@@ -211,12 +211,6 @@ export function Composer({
           maxLength={MAX_MESSAGE_LENGTH}
           placeholder="Escribe aquí…"
           onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              if (canSend) onSend();
-            }
-          }}
           className="max-h-32 min-h-[52px] flex-1 resize-none rounded-2xl border border-border bg-card px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
         />
         {!hasContent && voiceSupported && !sending ? (

@@ -256,17 +256,31 @@ describe('AssistantTab', () => {
     expect(h.send).toHaveBeenCalledTimes(1);
   });
 
-  it('sends with Enter but not with Shift+Enter, and ignores empty text', () => {
+  it('never sends with the keyboard: Enter only adds a line, the button is the only way to send', () => {
     render(<AssistantTab {...props} />);
     act(() => emit([t('u0', { status: 'done' })]));
     const box = screen.getByLabelText('Escribe tu mensaje');
-    fireEvent.keyDown(box, { key: 'Enter' });
-    expect(h.send).not.toHaveBeenCalled();
     fireEvent.change(box, { target: { value: 'hola' } });
-    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    for (const init of [
+      { key: 'Enter' },
+      { key: 'Enter', shiftKey: true },
+      { key: 'Enter', ctrlKey: true },
+      { key: 'Enter', metaKey: true },
+    ]) {
+      // fireEvent returns false when a handler called preventDefault, which would block the line break
+      expect(fireEvent.keyDown(box, init)).toBe(true);
+    }
     expect(h.send).not.toHaveBeenCalled();
-    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
     expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.send).toHaveBeenCalledWith('espacio_familia', { text: 'hola' });
+  });
+
+  it('does not send empty text with the button', () => {
+    render(<AssistantTab {...props} />);
+    act(() => emit([t('u0', { status: 'done' })]));
+    expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
+    expect(h.send).not.toHaveBeenCalled();
   });
 
   it('shows the error and gives the text back when sending fails', async () => {
