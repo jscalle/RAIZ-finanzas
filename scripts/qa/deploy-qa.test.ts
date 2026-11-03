@@ -19,6 +19,7 @@ function writeStubs() {
       file,
       `#!/usr/bin/env bash
 echo "${name} $*" >> "${log}"
+if [[ "${name}" == pnpm ]]; then env | grep '^VITE_' | sort | sed 's/^/pnpm-env /' >> "${log}"; fi
 if [[ "$*" == *"services describe"* ]]; then
   case "\${QA_STUB_DESCRIBE:-ok}" in
     ok) echo '{"spec":{}}' ;;
@@ -239,5 +240,42 @@ describe('deploy-qa.sh input validation', () => {
     const r = run(['api', '--dry-run'], { ...QA, QA_EXTRA_ORIGINS: 'https://qa.example.com,http://localhost:5173' });
     expect(r.code).toBe(0);
     expect(r.out).toContain('https://qa.example.com,http://localhost:5173');
+  });
+});
+
+describe('deploy-qa.sh web build uses the validated env file', () => {
+  const customEnv = FULL_ENV.replace('"https://example-qa.run.app"', '"https://from-the-file.example.run.app"').replace(
+    'VITE_FIREBASE_API_KEY="placeholder"',
+    'VITE_FIREBASE_API_KEY="very-secret-looking-key-123"'
+  );
+
+  it('passes every VITE_* value from QA_ENV_FILE to the build, overriding what the shell already has', () => {
+    const file = join(dir, 'custom.env');
+    writeFileSync(file, customEnv);
+    // The build step ends with the bundle check, which fails here (no real bundle); only the build call matters.
+    run(['web', '--yes'], {
+      ...QA,
+      QA_ENV_FILE: file,
+      VITE_API_BASE_URL: 'https://ambient-production.example.run.app',
+      VITE_FIREBASE_MEASUREMENT_ID: 'G-AMBIENTPROD',
+    });
+    const recorded = calls();
+    expect(recorded).toContain('pnpm exec vite build --mode qa');
+    expect(recorded).toContain('pnpm-env VITE_API_BASE_URL=https://from-the-file.example.run.app');
+    expect(recorded).toContain('pnpm-env VITE_FIREBASE_API_KEY=very-secret-looking-key-123');
+    // defined-but-empty values are passed too, so a production value cannot fill the gap
+    expect(recorded).toMatch(/pnpm-env VITE_FIREBASE_MEASUREMENT_ID=\n/);
+    expect(recorded).not.toContain('ambient-production');
+    expect(recorded).not.toContain('G-AMBIENTPROD');
+  });
+
+  it('does not print the values it passes to the build', () => {
+    const file = join(dir, 'custom2.env');
+    writeFileSync(file, customEnv);
+    const r = run(['web', '--dry-run'], { ...QA, QA_ENV_FILE: file });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('pnpm exec vite build --mode qa');
+    expect(r.out).not.toContain('very-secret-looking-key-123');
+    expect(r.out).not.toContain('from-the-file');
   });
 });

@@ -106,7 +106,7 @@ scripts/qa/deploy-qa.sh check            # validates names, tools and .env.qa
 scripts/qa/deploy-qa.sh web              # builds with --mode qa and deploys Hosting
 ```
 
-`api` also reads the deployed service back and fails if it carries Telegram variables or if it cannot read it, and `web` refuses to deploy a bundle that does not mention the QA project id. Open `https://<QA_PROJECT_ID>.web.app`, sign in with Google and create a test space. Use fictitious data only. If the Google consent screen is in Testing mode, add your testers there.
+`api` also reads the deployed service back and fails if it carries Telegram variables or if it cannot read it, and `web` builds with the values from `.env.qa` (or `QA_ENV_FILE`) passed as process variables, which Vite prefers over any `.env` file, and refuses to deploy a bundle that does not mention the QA project id. Open `https://<QA_PROJECT_ID>.web.app`, sign in with Google and create a test space. Use fictitious data only. If the Google consent screen is in Testing mode, add your testers there.
 
 ### Clean-up
 

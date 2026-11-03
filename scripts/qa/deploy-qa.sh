@@ -92,6 +92,10 @@ env_value() {
   sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}\$/\1/p" "$ENV_FILE" | tail -n 1
 }
 
+vite_vars_read_by_app() {
+  grep -rhoE --exclude='*.test.*' 'VITE_[A-Z0-9_]+' src vite.config.ts 2> /dev/null | sort -u || true
+}
+
 check_env_file() {
   [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE not found. Create it with the QA web app config (see DEPLOYMENT.md)."
   # Vite also loads .env, so every variable must be set here or a QA build could inherit production values.
@@ -104,9 +108,7 @@ check_env_file() {
     || fail "VITE_FIREBASE_PROJECT_ID in $ENV_FILE does not match QA_PROJECT_ID."
   # Every other VITE_* variable the app reads must at least be defined (empty is fine), otherwise
   # the value from a production .env would be baked into the QA bundle.
-  local referenced
-  referenced="$(grep -rhoE --exclude='*.test.*' 'VITE_[A-Z0-9_]+' src vite.config.ts 2> /dev/null | sort -u || true)"
-  for key in $referenced; do
+  for key in $(vite_vars_read_by_app); do
     grep -q "^${key}=" "$ENV_FILE" \
       || fail "$key is read by the app but not defined in $ENV_FILE. Define it (empty is fine) so a production .env value cannot leak into the QA build."
   done
@@ -171,7 +173,17 @@ cmd_web() {
   check_tools firebase pnpm
   check_env_file
   confirm
-  run pnpm exec vite build --mode qa
+  # Hand the validated values to the build as process variables. Vite gives those priority over every
+  # .env file, so neither .env, .env.qa nor the shell can change what ends up in the bundle, and
+  # QA_ENV_FILE is really the file used. Values are not printed.
+  local build_env=() key
+  for key in $(vite_vars_read_by_app); do
+    build_env+=("$key=$(env_value "$key")")
+  done
+  echo "+ env <${#build_env[@]} VITE_* variables from $ENV_FILE> pnpm exec vite build --mode qa"
+  if [[ "$DRY_RUN" == 0 ]]; then
+    env "${build_env[@]}" pnpm exec vite build --mode qa
+  fi
   if [[ "$DRY_RUN" == 0 ]]; then
     grep -rqF "$QA_PROJECT_ID" dist/assets \
       || fail "the built bundle does not mention $QA_PROJECT_ID; it may carry another project's config. Not deploying."
