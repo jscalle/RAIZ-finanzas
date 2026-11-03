@@ -48,6 +48,7 @@ import {
 import type { AssistantMedia } from "./server/assistantService";
 import { assistantBodyParser, handleAssistantMessage } from "./server/assistantRoute";
 import { createQuota } from "./server/assistantMedia";
+import { createApiCors, parseAllowedOrigins } from "./server/cors";
 
 dotenv.config();
 
@@ -243,6 +244,8 @@ async function startServer() {
 
   // Trust the proxy hop so req.ip reflects the real client when deployed behind one.
   app.set("trust proxy", 1);
+  // Opt-in CORS for a frontend hosted on another origin (see DEPLOYMENT.md). Empty by default.
+  app.use("/api", createApiCors(parseAllowedOrigins(process.env.CORS_ALLOWED_ORIGINS)));
   // Assistant routes keep their own 15 MB limit; this must come before the global parser.
   app.use("/api/assistant", ...assistantBodyParser());
   app.use(express.json({ limit: "50mb" }));
