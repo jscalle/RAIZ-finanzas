@@ -52,7 +52,7 @@ function RecordingBar({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-3"
+      className="flex items-center gap-2 px-2 py-2 md:px-3 md:py-3"
       role="group"
       aria-label="Grabando nota de voz"
     >
@@ -87,7 +87,7 @@ function RecordingBar({
           ))}
         </span>
         <span className="truncate text-sm text-muted-foreground">
-          Máximo 3 minutos
+          Máx. 3 min
         </span>
       </div>
       <button
@@ -185,7 +185,7 @@ export function Composer({
         </div>
       )}
       <form
-        className="flex items-end gap-2 px-3 py-3"
+        className="flex items-end gap-2 px-2 py-2 md:px-3 md:py-3"
         onSubmit={(e) => {
           e.preventDefault();
           if (canSend) onSend();

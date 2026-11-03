@@ -480,7 +480,7 @@ describe('AssistantTab', () => {
         screen.getByRole('group', { name: 'Grabando nota de voz' })
       ).toBeInTheDocument();
       expect(screen.getByText('1:15')).toBeInTheDocument();
-      expect(screen.getByText('Máximo 3 minutos')).toBeInTheDocument();
+      expect(screen.getByText('Máx. 3 min')).toBeInTheDocument();
       expect(screen.queryByLabelText('Escribe tu mensaje')).toBeNull();
       fireEvent.click(
         screen.getByRole('button', { name: 'Cancelar grabación' })

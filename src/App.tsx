@@ -2321,7 +2321,11 @@ export default function App() {
       </aside>
 
       {/* MOBILE HEADER */}
-      <div className="md:hidden sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3">
+      <div
+        className={`md:hidden sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3 ${
+          activeTab === 'assistant' ? 'hidden' : ''
+        }`}
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <img
@@ -2511,10 +2515,14 @@ export default function App() {
       {/* MAIN CONTAINER */}
       <main
         className={`flex-1 overflow-y-auto outline-none md:pb-10 ${
-          activeTab === 'assistant' ? 'pb-24' : 'pb-36'
+          activeTab === 'assistant' ? 'pb-0' : 'pb-36'
         }`}
       >
-        <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-10">
+        <div
+          className={`max-w-5xl mx-auto md:px-8 md:py-10 ${
+            activeTab === 'assistant' ? 'px-0 py-0' : 'px-4 py-6'
+          }`}
+        >
           {activeTab !== 'assistant' && (
             <PendingTransactionsBanner
               pendingTransactions={pendingTransactions}

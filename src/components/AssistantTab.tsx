@@ -209,7 +209,7 @@ export default function AssistantTab({
   return (
     <section
       aria-label="Asistente"
-      className="mx-auto flex h-[calc(100dvh-11rem)] min-h-[420px] max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-background md:h-[calc(100dvh-9rem)]"
+      className="mx-auto flex h-[calc(100dvh-max(76px,calc(55px+env(safe-area-inset-bottom,0px)))-env(safe-area-inset-top,0px))] min-h-[320px] max-w-3xl flex-col overflow-hidden bg-background md:h-[calc(100dvh-9rem)] md:min-h-[420px] md:rounded-3xl md:border md:border-border"
     >
       {loadError && (
         <p
@@ -224,7 +224,7 @@ export default function AssistantTab({
         role="log"
         aria-live="polite"
         aria-label="Conversación con el asistente"
-        className="flex-1 space-y-3 overflow-y-auto px-3 py-4"
+        className="flex-1 space-y-2.5 overflow-y-auto px-2 py-3 md:space-y-3 md:px-3 md:py-4"
       >
         {loading && (
           <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -240,17 +240,17 @@ export default function AssistantTab({
           <>
             <div className="flex items-end gap-2">
               <div
-                className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                className="mb-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary md:flex"
                 aria-hidden="true"
               >
                 <Sprout className="h-4 w-4" />
               </div>
-              <div className="max-w-[85%] rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3 text-base text-foreground">
+              <div className="max-w-[94%] rounded-2xl rounded-bl-md border border-border bg-card px-3 py-2.5 text-base text-foreground md:max-w-[85%] md:px-4 md:py-3">
                 Hola, soy tu asistente. Cuéntame un gasto o un ingreso, o
                 pregúntame cómo vas este mes.
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 pl-10">
+            <div className="flex flex-wrap gap-2 md:pl-10">
               {CHIPS.map((chip) => (
                 <button
                   key={chip.label}
