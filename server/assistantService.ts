@@ -60,11 +60,15 @@ export const assistantResponseSchema = {
   required: ["intent", "transactions"],
 };
 
-export function buildAssistantPrompt(ctx: AssistantContext, text: string): string {
+export function buildAssistantPrompt(
+  ctx: AssistantContext,
+  text: string,
+  extraInstructions = ''
+): string {
   const { topics, fullContext, todayISO } = ctx;
   const recentRecords = fullContext?.recentRecords || [];
   const topicNames = topics.map((t) => `${t.name} (${t.type})`).join(', ');
-  return `Actúa como FinPersonAI, el asesor y analista financiero personal del usuario en Colombia.
+  const prompt = `Actúa como FinPersonAI, el asesor y analista financiero personal del usuario en Colombia.
 Tu tarea es decidir si el usuario está:
 A) Haciendo una CONSULTA / PREGUNTA / ANÁLISIS sobre sus finanzas, saldos, presupuestos, categorías o historial (intent = "QUERY").
 B) Enviando uno o varios gastos/ingresos nuevos (por texto, nota de voz/audio o imagen) para REGISTRARLOS (intent = "RECORD").
@@ -101,13 +105,30 @@ Instrucciones clave:
    - Lee con máxima precisión el monto numérico (amount), asigna una categoría exacta de la lista [${topicNames}], el método ("DEBITO", "CREDITO", "EFECTIVO", "DIGITAL") y la fecha YYYY-MM-DD.
 
 Mensaje de texto adicional del usuario: "${text ? text.slice(0, 2000) : "(Nota de voz / imagen adjunta sin texto)"}"`;
+  return extraInstructions ? `${prompt}\n\n${extraInstructions}` : prompt;
+}
+
+/** Extra rules for the in-app chat, appended to the shared prompt (Telegram does not get them). */
+export function inAppInstructions(hasCategories: boolean): string {
+  const lines = [
+    'Instrucciones adicionales para la app (tienen prioridad sobre las anteriores):',
+    '- Los movimientos NO quedan guardados hasta que el usuario toque el botón "Guardar" de la tarjeta. Nunca digas "registré", "guardé" ni "quedó registrado": di "Entendí esto" y pídele que lo revise y lo confirme con Guardar.',
+    '- Responde en español sencillo y corto, pensando en una persona que usa poco la tecnología. Máximo 8 líneas, salvo que pida un análisis. Evita los encabezados con # y los bloques de código.',
+    '- Habla solo de las categorías de la lista de arriba. No inventes ni menciones categorías que no estén en esa lista.',
+  ];
+  if (!hasCategories) {
+    lines.push(
+      '- Este espacio todavía NO tiene categorías creadas. Si el usuario pregunta por ellas, dile con claridad que aún no hay ninguna y que puede crearlas en la sección "Categorías" de la app; no afirmes que existen. Registra los movimientos con "category" vacío.'
+    );
+  }
+  return lines.join('\n');
 }
 
 export async function loadAssistantContext(
   getDb: () => Firestore,
   spaceId: string
 ): Promise<AssistantContext> {
-  const topics = await getSpaceTopics(getDb, spaceId);
+  const topics = await getSpaceTopics(getDb, spaceId, { fallback: false });
   const fullContext = await getSpaceFullContext(getDb, spaceId);
   return { topics, fullContext, todayISO: getColombiaDateISO() };
 }
@@ -116,13 +137,13 @@ export async function loadAssistantContext(
 export async function runAssistantModel(
   deps: { generate: GenerateFn },
   ctx: AssistantContext,
-  input: { text: string; media?: AssistantMedia[] }
+  input: { text: string; media?: AssistantMedia[]; extraInstructions?: string }
 ): Promise<{ parsed: any; usedFallback: boolean }> {
   const media = input.media ?? [];
   const contents: any[] = media.map((m) => ({
     inlineData: { mimeType: m.mimeType, data: m.dataBase64 },
   }));
-  contents.push(buildAssistantPrompt(ctx, input.text));
+  contents.push(buildAssistantPrompt(ctx, input.text, input.extraInstructions));
   try {
     const raw = await deps.generate({ contents });
     return { parsed: JSON.parse(raw.trim() || '{}'), usedFallback: false };
@@ -182,8 +203,8 @@ export function buildDrafts(input: {
       amount: Number(parsed.amount) || 0,
       currency: parsed.currency || 'COP',
       description: parsed.description || (text ? text.slice(0, 40) : 'Comprobante'),
-      category: matchedTopic ? matchedTopic.name : 'Gastos imprevistos',
-      topicId: matchedTopic ? matchedTopic.id : 'topic_1785985166584',
+      category: matchedTopic ? matchedTopic.name : 'Sin categoría',
+      topicId: matchedTopic ? matchedTopic.id : '',
       paymentMethod: parsed.paymentMethod || (isIncome ? 'DIGITAL' : 'DEBITO'),
       date: normalizeDateToISO(parsed.date || todayISO),
       explanation:

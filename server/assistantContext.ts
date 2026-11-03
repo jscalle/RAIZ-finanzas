@@ -40,7 +40,13 @@ export function normalizeDateToISO(dateStr: string): string {
   return dateStr;
 }
 
-export async function getSpaceTopics(getDb: () => Firestore, spaceId: string): Promise<Array<{ id: string; name: string; type: string }>> {
+export async function getSpaceTopics(
+  getDb: () => Firestore,
+  spaceId: string,
+  // Telegram keeps its built-in example list for spaces without categories; the in-app
+  // assistant passes fallback: false so it never talks about categories that do not exist.
+  options: { fallback?: boolean } = {}
+): Promise<Array<{ id: string; name: string; type: string }>> {
   try {
     const adminDb = getDb();
     const snap = await adminDb.collection("spaces").doc(spaceId).collection("topics").get();
@@ -54,6 +60,7 @@ export async function getSpaceTopics(getDb: () => Firestore, spaceId: string): P
   } catch (e) {
     console.warn("[assistant] Fallback topics used:", e);
   }
+  if (options.fallback === false) return [];
   return [
     { id: "topic_1788142618873", name: "Restaurantes", type: "EXPENSE" },
     { id: "topic_comida", name: "Alimentación", type: "EXPENSE" },

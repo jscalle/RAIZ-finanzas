@@ -48,6 +48,21 @@ describe('getSpaceTopics', () => {
     expect(topics.some((t) => t.type === 'INCOME')).toBe(true);
   });
 
+  it('can skip the built-in topics: an empty space has no categories and an unavailable database none either', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await getSpaceTopics(() => createFakeDb({}, {}), 'espacio', { fallback: false })).toEqual([]);
+    expect(
+      await getSpaceTopics(
+        () => {
+          throw new Error('admin not ready');
+        },
+        'espacio',
+        { fallback: false }
+      )
+    ).toEqual([]);
+    warn.mockRestore();
+  });
+
   it('falls back to the built-in topics when the database is unavailable', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const topics = await getSpaceTopics(() => {

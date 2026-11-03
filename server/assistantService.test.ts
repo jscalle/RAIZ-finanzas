@@ -5,8 +5,11 @@ import {
   assertSpaceMember,
   buildAssistantPrompt,
   buildDrafts,
+  inAppInstructions,
+  loadAssistantContext,
   runAssistantModel,
 } from './assistantService';
+import { createMemoryFirestore } from './testing/memoryFirestore';
 import type { AssistantContext } from './assistantService';
 
 const topics = [
@@ -158,5 +161,56 @@ describe('assertSpaceMember', () => {
     for (const id of ['.', '..', '__reserved__']) {
       expect(await assertSpaceMember(() => db, id, 'owner')).toEqual({ ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } });
     }
+  });
+});
+
+describe('categories that do not exist', () => {
+  it('loads no categories for a space that has none instead of inventing a default list', async () => {
+    const mem = createMemoryFirestore({ 'spaces/vacio': { ownerUid: 'u', members: ['u'] } });
+    const ctx = await loadAssistantContext(() => mem.db, 'vacio');
+    expect(ctx.topics).toEqual([]);
+  });
+
+  it('loads the real categories of a space that has them', async () => {
+    const mem = createMemoryFirestore({
+      'spaces/lleno': { ownerUid: 'u', members: ['u'] },
+      'spaces/lleno/topics/t1': { name: 'Mercado', type: 'EXPENSE' },
+    });
+    expect((await loadAssistantContext(() => mem.db, 'lleno')).topics).toEqual([
+      { id: 't1', name: 'Mercado', type: 'EXPENSE' },
+    ]);
+  });
+
+  it('leaves a draft without a category, not in a made-up one, when there are no categories', () => {
+    const [d] = buildDrafts({
+      transactions: [{ type: 'EXPENSE', amount: 100, category: 'Ocio y Entretenimiento' }],
+      topics: [],
+      spaceId: 'espacio',
+      text: 'x',
+      todayISO: '2026-11-15',
+      idPrefix: 'as_',
+      now,
+    });
+    expect(d).toMatchObject({ category: 'Sin categoría', topicId: '' });
+  });
+});
+
+describe('in-app instructions', () => {
+  it('keeps the prompt exactly as before when no extra instructions are given', () => {
+    expect(buildAssistantPrompt(ctx, 'hola')).not.toContain('Instrucciones adicionales');
+    expect(buildAssistantPrompt(ctx, 'hola', inAppInstructions(true))).toContain('Instrucciones adicionales');
+  });
+
+  it('forbids saying a movement was saved before the user confirms it', () => {
+    const text = inAppInstructions(true);
+    expect(text).toContain('Guardar');
+    expect(text).toContain('Nunca digas');
+    expect(text).not.toContain('todavía NO tiene categorías');
+  });
+
+  it('tells the model plainly that the space has no categories and where to create them', () => {
+    const text = inAppInstructions(false);
+    expect(text).toContain('todavía NO tiene categorías');
+    expect(text).toContain('sección "Categorías"');
   });
 });

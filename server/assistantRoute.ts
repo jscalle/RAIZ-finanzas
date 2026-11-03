@@ -9,6 +9,7 @@ import { normalizeDateToISO } from './assistantContext';
 import {
   assertSpaceMember,
   buildDrafts,
+  inAppInstructions,
   loadAssistantContext,
   runAssistantModel,
 } from './assistantService';
@@ -180,7 +181,11 @@ export async function handleAssistantMessage(
 
   try {
     const ctx = await loadAssistantContext(deps.getDb, space);
-    const { parsed, usedFallback } = await runAssistantModel(deps, ctx, { text, media });
+    const { parsed, usedFallback } = await runAssistantModel(deps, ctx, {
+      text,
+      media,
+      extraInstructions: inAppInstructions(ctx.topics.length > 0),
+    });
 
     const answer: Record<string, unknown> = parsed && typeof parsed === 'object' ? parsed : {};
     const drafts = buildDrafts({

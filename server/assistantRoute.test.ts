@@ -144,6 +144,34 @@ describe('handleAssistantMessage', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  describe('categories grounding', () => {
+    const promptOf = (generate: ReturnType<typeof vi.fn>) => {
+      const { contents } = generate.mock.calls[0][0];
+      return String(contents[contents.length - 1]);
+    };
+    const emptySpace = () =>
+      createMemoryFirestore({ 'spaces/mine': { ownerUid: 'owner', members: ['owner', 'kid'], startingSavings: 0 } });
+
+    it('always asks the model not to claim a movement is saved before the user confirms', async () => {
+      const generate = vi.fn().mockResolvedValue(JSON.stringify({ intent: 'QUERY', chatResponse: 'ok', transactions: [] }));
+      await run(generate, { spaceId: 'mine', text: 'hola' });
+      expect(promptOf(generate)).toContain('Nunca digas');
+      expect(promptOf(generate)).not.toContain('todavía NO tiene categorías');
+    });
+
+    it('tells the model there are no categories when the space has none, and drafts stay uncategorized', async () => {
+      const generate = vi.fn().mockResolvedValue(
+        JSON.stringify({ intent: 'RECORD', transactions: [{ type: 'EXPENSE', amount: 130000, category: 'Ocio y Entretenimiento', description: 'Torneo' }] })
+      );
+      const res = await run(generate, { spaceId: 'mine', text: 'Torneo 130000' }, 'kid', undefined, { mem: emptySpace() });
+      const prompt = promptOf(generate);
+      expect(prompt).toContain('todavía NO tiene categorías');
+      expect(prompt).not.toContain('Restaurantes');
+      expect(prompt).not.toContain('Salario Fijo');
+      expect((res.body as any).drafts[0]).toMatchObject({ category: 'Sin categoría', topicId: '' });
+    });
+  });
+
   it('answers 429 with a retry time when the per-user caps are reached', async () => {
     const ok = async () => JSON.stringify({ intent: 'QUERY', chatResponse: 'ok', transactions: [] });
     const limits = {
