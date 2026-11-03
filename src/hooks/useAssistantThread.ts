@@ -10,44 +10,50 @@ const PERMISSION_ERROR =
 const GENERIC_ERROR =
   'No pude cargar la conversación. Revisa tu conexión e intenta de nuevo.';
 
+interface Snapshot {
+  /** Which space and user this snapshot belongs to; a different key means it is stale. */
+  key: string | null;
+  messages: ThreadMessage[];
+  loaded: boolean;
+  error: string | null;
+}
+
+const EMPTY: Snapshot = { key: null, messages: [], loaded: false, error: null };
+
 /**
  * Live conversation of the signed-in user with the assistant in one space.
- * Listens only while enabled with a space and a user, and stops (and clears the
- * messages) whenever the space or the user changes.
+ * Listens only while enabled with a space and a user. When the space or the user
+ * changes the previous messages stop applying right away (the state is keyed), and
+ * the old listener is closed.
  */
 export function useAssistantThread(
   spaceId: string | undefined,
   uid: string | undefined,
   enabled: boolean
 ) {
-  const [messages, setMessages] = useState<ThreadMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const key = enabled && spaceId && uid ? `${spaceId}|${uid}` : null;
+  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY);
 
   useEffect(() => {
-    setMessages([]);
-    setLoadError(null);
-    if (!enabled || !spaceId || !uid) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+    if (!key || !spaceId || !uid) return;
     return subscribeToAssistantThread(
       spaceId,
       uid,
-      (next) => {
-        setMessages(next);
-        setLoading(false);
-        setLoadError(null);
-      },
-      (error) => {
-        setLoading(false);
-        setLoadError(
-          isPermissionDenied(error) ? PERMISSION_ERROR : GENERIC_ERROR
-        );
-      }
+      (messages) => setSnapshot({ key, messages, loaded: true, error: null }),
+      (error) =>
+        setSnapshot((previous) => ({
+          key,
+          messages: previous.key === key ? previous.messages : [],
+          loaded: true,
+          error: isPermissionDenied(error) ? PERMISSION_ERROR : GENERIC_ERROR,
+        }))
     );
-  }, [spaceId, uid, enabled]);
+  }, [key, spaceId, uid]);
 
-  return { messages, loading, loadError };
+  const current = snapshot.key === key ? snapshot : EMPTY;
+  return {
+    messages: current.messages,
+    loading: key !== null && !current.loaded,
+    loadError: current.error,
+  };
 }

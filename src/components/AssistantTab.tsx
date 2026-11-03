@@ -39,7 +39,6 @@ export default function AssistantTab({
   const waiting = messages.some((m) => m.status === 'analyzing');
   useEffect(() => {
     if (!waiting) return;
-    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(id);
   }, [waiting]);
