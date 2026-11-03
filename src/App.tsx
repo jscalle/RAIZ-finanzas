@@ -240,6 +240,9 @@ export default function App() {
   const [pendingTransactions, setPendingTransactions] = useState<
     PendingTransaction[]
   >([]);
+  // The space whose pending drafts have loaded at least once; derived so it never
+  // needs resetting when the space changes.
+  const [pendingLoadedSpace, setPendingLoadedSpace] = useState('');
   const [editingPendingTx, setEditingPendingTx] =
     useState<PendingTransaction | null>(null);
 
@@ -559,6 +562,7 @@ export default function App() {
       currentSpaceId,
       'pending_transactions',
       (items) => {
+        setPendingLoadedSpace(currentSpaceId);
         setPendingTransactions(
           items
             .filter(
@@ -2503,13 +2507,15 @@ export default function App() {
       {/* MAIN CONTAINER */}
       <main className="flex-1 overflow-y-auto outline-none pb-36 md:pb-10">
         <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-10">
-          <PendingTransactionsBanner
-            pendingTransactions={pendingTransactions}
-            onApprove={handleApprovePendingTransaction}
-            onApproveAll={handleApproveAllPendingTransactions}
-            onDiscard={handleDiscardPendingTransaction}
-            onEdit={(tx) => setEditingPendingTx(tx)}
-          />
+          {activeTab !== 'assistant' && (
+            <PendingTransactionsBanner
+              pendingTransactions={pendingTransactions}
+              onApprove={handleApprovePendingTransaction}
+              onApproveAll={handleApproveAllPendingTransactions}
+              onDiscard={handleDiscardPendingTransaction}
+              onEdit={(tx) => setEditingPendingTx(tx)}
+            />
+          )}
 
           <EditPendingTransactionModal
             pendingTx={editingPendingTx}
@@ -2617,6 +2623,11 @@ export default function App() {
                     userUid={user?.uid}
                     syncEnabled={syncEnabled}
                     onOpenCloudSettings={() => setActiveTab('sync_settings')}
+                    pendingTransactions={pendingTransactions}
+                    pendingReady={pendingLoadedSpace === currentSpaceId}
+                    onApproveDraft={handleApprovePendingTransaction}
+                    onEditDraft={(tx) => setEditingPendingTx(tx)}
+                    onDiscardDraft={handleDiscardPendingTransaction}
                   />
                 )}
                 {activeTab === 'incomes' && (

@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CloudOff, Loader2, Sprout } from 'lucide-react';
 import { sendAssistantMessage } from '../lib/firebase';
 import { useAssistantThread } from '../hooks/useAssistantThread';
+import type { PendingTransaction } from '../types';
 import { ChatMessage } from './assistant/ChatMessage';
+import { DraftCard } from './assistant/DraftCard';
 import { Composer } from './assistant/Composer';
 
 interface Props {
@@ -11,6 +13,14 @@ interface Props {
   /** True when the user is signed in and cloud sync is on. */
   syncEnabled: boolean;
   onOpenCloudSettings: () => void;
+  /** Drafts waiting for a decision; the live version of what draft messages show. */
+  pendingTransactions: PendingTransaction[];
+  /** False until the first load of pending drafts arrived. */
+  pendingReady: boolean;
+  /** The same handlers the pending-drafts banner uses. */
+  onApproveDraft: (tx: PendingTransaction) => void;
+  onEditDraft: (tx: PendingTransaction) => void;
+  onDiscardDraft: (id: string) => void;
 }
 
 const CHIPS = [
@@ -23,6 +33,11 @@ export default function AssistantTab({
   userUid,
   syncEnabled,
   onOpenCloudSettings,
+  pendingTransactions,
+  pendingReady,
+  onApproveDraft,
+  onEditDraft,
+  onDiscardDraft,
 }: Props) {
   const enabled = syncEnabled && !!userUid && !!currentSpaceId;
   const { messages, loading, loadError } = useAssistantThread(
@@ -34,6 +49,10 @@ export default function AssistantTab({
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const pendingById = useMemo(
+    () => new Map(pendingTransactions.map((tx) => [tx.id, tx])),
+    [pendingTransactions]
+  );
   const endRef = useRef<HTMLDivElement>(null);
 
   const waiting = messages.some((m) => m.status === 'analyzing');
@@ -153,7 +172,25 @@ export default function AssistantTab({
         )}
 
         {messages.map((m) => (
-          <ChatMessage key={m.id} message={m} now={now} />
+          <ChatMessage
+            key={m.id}
+            message={m}
+            now={now}
+            renderDraft={(draftMessage) => (
+              <DraftCard
+                message={draftMessage}
+                pending={
+                  draftMessage.draftId
+                    ? pendingById.get(draftMessage.draftId)
+                    : undefined
+                }
+                ready={pendingReady}
+                onApprove={onApproveDraft}
+                onEdit={onEditDraft}
+                onDiscard={onDiscardDraft}
+              />
+            )}
+          />
         ))}
         <div ref={endRef} />
       </div>

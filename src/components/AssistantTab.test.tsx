@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import type { ThreadMessage } from '../types';
+import type { PendingTransaction, ThreadMessage } from '../types';
 
 const h = vi.hoisted(() => ({
   send: vi.fn(),
@@ -27,12 +27,6 @@ type Fail = (e: unknown) => void;
 let emit: Emit;
 let fail: Fail;
 
-const props = {
-  currentSpaceId: 'espacio_familia',
-  userUid: 'kid-uid',
-  syncEnabled: true,
-  onOpenCloudSettings: vi.fn(),
-};
 const t = (id: string, over: Partial<ThreadMessage> = {}): ThreadMessage => ({
   id,
   role: 'user',
@@ -40,6 +34,50 @@ const t = (id: string, over: Partial<ThreadMessage> = {}): ThreadMessage => ({
   text: id,
   createdAt: new Date().toISOString(),
   ...over,
+});
+const draftHandlers = {
+  onApproveDraft: vi.fn(),
+  onEditDraft: vi.fn(),
+  onDiscardDraft: vi.fn(),
+};
+const props = {
+  currentSpaceId: 'espacio_familia',
+  userUid: 'kid-uid',
+  syncEnabled: true,
+  onOpenCloudSettings: vi.fn(),
+  pendingTransactions: [] as PendingTransaction[],
+  pendingReady: true,
+  ...draftHandlers,
+};
+const pendingTx: PendingTransaction = {
+  id: 'as_1',
+  spaceId: 'espacio_familia',
+  type: 'EXPENSE',
+  amount: 45000,
+  currency: 'COP',
+  description: 'Almuerzo',
+  category: 'Comida',
+  date: '2026-11-15',
+  explanation: '',
+  status: 'PENDING',
+  source: 'SMS_WEBHOOK',
+  createdAt: '2026-11-15T10:00:00.000Z',
+  paymentMethod: 'DEBITO',
+};
+const draftMessage = t('a9', {
+  role: 'assistant',
+  kind: 'draft',
+  text: 'x',
+  draftId: 'as_1',
+  draft: {
+    type: 'EXPENSE',
+    amount: 45000,
+    currency: 'COP',
+    description: 'Almuerzo',
+    category: 'Comida',
+    paymentMethod: 'DEBITO',
+    date: '2026-11-15',
+  },
 });
 
 beforeEach(() => {
@@ -116,6 +154,51 @@ describe('AssistantTab', () => {
     expect(screen.getByText('Ojo con esto')).toBeInTheDocument();
     expect(
       screen.getByRole('log', { name: 'Conversación con el asistente' })
+    ).toBeInTheDocument();
+  });
+
+  it('shows a draft as a live card and saves only when the user taps Guardar', () => {
+    const onApproveDraft = vi.fn();
+    render(
+      <AssistantTab
+        {...props}
+        pendingTransactions={[pendingTx]}
+        onApproveDraft={onApproveDraft}
+      />
+    );
+    act(() => emit([t('u1', { status: 'done' }), draftMessage]));
+    expect(onApproveDraft).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    expect(onApproveDraft).toHaveBeenCalledWith(pendingTx);
+  });
+
+  it('routes Cambiar and Descartar to the same handlers the banner uses', () => {
+    const onEditDraft = vi.fn();
+    const onDiscardDraft = vi.fn();
+    render(
+      <AssistantTab
+        {...props}
+        pendingTransactions={[pendingTx]}
+        onEditDraft={onEditDraft}
+        onDiscardDraft={onDiscardDraft}
+      />
+    );
+    act(() => emit([draftMessage]));
+    fireEvent.click(screen.getByRole('button', { name: 'Cambiar' }));
+    expect(onEditDraft).toHaveBeenCalledWith(pendingTx);
+    fireEvent.click(screen.getByRole('button', { name: 'Descartar' }));
+    expect(onDiscardDraft).toHaveBeenCalledWith('as_1');
+  });
+
+  it('explains a draft that is no longer pending, and waits while pending drafts load', () => {
+    const { rerender } = render(
+      <AssistantTab {...props} pendingReady={false} />
+    );
+    act(() => emit([draftMessage]));
+    expect(screen.getByText('Revisando…')).toBeInTheDocument();
+    rerender(<AssistantTab {...props} pendingReady />);
+    expect(
+      screen.getByText('Este movimiento ya se guardó o se descartó.')
     ).toBeInTheDocument();
   });
 
