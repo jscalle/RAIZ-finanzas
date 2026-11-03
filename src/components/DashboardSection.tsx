@@ -27,6 +27,8 @@ interface DashboardSectionProps {
   activeMonth: string;
   setActiveMonth: (month: string) => void;
   capitalDisponible: number;
+  /** Balance left over from earlier months (income minus spending up to last month). */
+  carryOver?: number;
   cashPool: number;
   totals: { ingreso: number; gasto: number; ahorro: number };
   recentTransactions: {
@@ -47,6 +49,7 @@ export default function DashboardSection({
   totalContributions,
   formatCurrency,
   totals,
+  carryOver = 0,
   recentTransactions,
 }: DashboardSectionProps) {
   const expensesFromSavings = (
@@ -115,6 +118,19 @@ export default function DashboardSection({
     }
   }
 
+  // Spending in categories without a limit (or whose category no longer exists) has no envelope to
+  // come out of, so it reduces the free money directly. Spending funded from savings and credit
+  // card payments are left out: they are not paid from this month's income.
+  const budgetedIds = new Set(budgetedTopics.map((t) => t.id));
+  const unbudgetedSpendMonth = confirmedMonthExpenses
+    .filter(
+      (e) =>
+        !budgetedIds.has(e.topicId) &&
+        e.topicId !== 'topic_1787580821277' &&
+        e.source !== 'AHORROS'
+    )
+    .reduce((sum, e) => sum + e.amount, 0);
+
   const realConsumptionMonth = confirmedMonthExpenses
     .filter((e) => e.topicId !== 'topic_1787580821277')
     .reduce((sum, e) => sum + e.amount, 0);
@@ -144,13 +160,16 @@ export default function DashboardSection({
   );
 
   // Disponible Real para Gastar (Proyectado del Mes):
-  // Ingresos del mes - Ahorro del mes - (Topes Planeados + Excesos sobre Topes + Deuda TC anterior pagada este mes)
+  // Saldo del mes anterior + Ingresos del mes - Ahorro del mes - (Topes Planeados + Excesos sobre Topes
+  // + Gastos sin tope + Deuda TC anterior pagada este mes)
   const disponibleRealParaGastar = Math.max(
     0,
-    totals.ingreso -
+    carryOver +
+      totals.ingreso -
       totals.ahorro -
       totalBudgetLimit -
       overBudgetTotal -
+      unbudgetedSpendMonth -
       netPriorTcDebtPaidThisMonth
   );
 
@@ -225,11 +244,23 @@ export default function DashboardSection({
             <p className="mt-1 font-display text-5xl font-bold tracking-tight text-foreground">
               {formatCurrency(disponibleRealParaGastar)}
             </p>
+            {carryOver > 0 && (
+              <p className="text-xs font-medium text-muted-foreground">
+                {`Incluye ${formatCurrency(carryOver)} del mes anterior`}
+              </p>
+            )}
             <p className="mt-2 text-xs text-muted-foreground leading-relaxed max-w-xl">
-              Cálculo: Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes
-              ({formatCurrency(totals.ahorro)}) − Topes planeados (
+              Cálculo:{' '}
+              {carryOver > 0
+                ? `Saldo del mes anterior (${formatCurrency(carryOver)}) + `
+                : ''}
+              Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes (
+              {formatCurrency(totals.ahorro)}) − Topes planeados (
               {formatCurrency(totalBudgetLimit)}) − Excesos fuera de tope (
               {formatCurrency(overBudgetTotal)})
+              {unbudgetedSpendMonth > 0
+                ? ` − Gastos sin tope (${formatCurrency(unbudgetedSpendMonth)})`
+                : ''}
               {netPriorTcDebtPaidThisMonth > 0
                 ? ` − Deuda TC anterior pagada (${formatCurrency(netPriorTcDebtPaidThisMonth)})`
                 : ''}

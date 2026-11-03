@@ -1,6 +1,7 @@
 // Channel-agnostic space context for the assistant (Telegram and in-app).
 // Moved verbatim out of server.ts; behaviour unchanged.
 import type { Firestore } from 'firebase-admin/firestore';
+import { calculateFinancials } from '../src/lib/mathEngine';
 
 export const DEMO_SEED_IDS = new Set([
   "exp_1",
@@ -153,6 +154,25 @@ export async function getSpaceFullContext(getDb: () => Firestore, spaceId: strin
       }));
 
     const currentMonth = getColombiaDateISO().slice(0, 7);
+
+    // Balance left over from earlier months, computed with the same function the web app uses
+    // so the assistant and the dashboard cannot disagree.
+    const [cy, cm] = currentMonth.split("-").map(Number);
+    const previousDate = new Date(Date.UTC(cy, cm - 2, 1));
+    const previousMonth = `${previousDate.getUTCFullYear()}-${String(previousDate.getUTCMonth() + 1).padStart(2, "0")}`;
+    const upToPrevious = <T extends { date?: string }>(rows: T[]) =>
+      rows.filter((r) => (r.date || "").slice(0, 7) <= previousMonth);
+    const withdrawals = withSnap.docs
+      .filter((d) => !DEMO_SEED_IDS.has(d.id))
+      .map((d) => ({ amount: Number(d.data().amount) || 0, date: d.data().date || "" }));
+    const previousFinancials = calculateFinancials(
+      upToPrevious(incomes) as never,
+      upToPrevious(expenses) as never,
+      upToPrevious(contributions) as never,
+      upToPrevious(withdrawals) as never,
+      startingSavings
+    );
+    const saldoMesAnterior = Math.max(0, previousFinancials.currentIncomesPool + previousFinancials.cashPool);
     const validExpenses = expenses.filter(
       (e) =>
         e.confirmed &&
@@ -238,16 +258,26 @@ export async function getSpaceFullContext(getDb: () => Firestore, spaceId: strin
     const ahorroMesActual = monthContributions.reduce((s, c) => s + c.amount, 0);
     const deudaTcPendienteTotal = unpaidCreditExpenses.reduce((s, e) => s + e.amount, 0);
 
-    // Exact same formula as Web App DashboardSection.tsx:
-    // Ingresos ($9.568.204) - Ahorro mes ($1.500.000) - Topes planeados ($5.380.000) - Excesos fuera de tope ($327.487) - Deuda TC anterior pagada ($1.729.800) = $630.917
+    // Spending in categories without a limit has no envelope to come out of, so it reduces the free
+    // money directly. Savings-funded spending and credit card payments are left out.
+    const budgetedIds = new Set(categoryBreakdown.filter((c) => c.monthlyLimit > 0).map((c) => c.topicId));
+    const gastosSinTopeMesActual = monthExpenses
+      .filter((e) => !budgetedIds.has(e.topicId) && e.topicId !== "topic_1787580821277" && e.source !== "AHORROS")
+      .reduce((s, e) => s + e.amount, 0);
+
+    // Same formula as Web App DashboardSection.tsx:
+    // Saldo del mes anterior + Ingresos - Ahorro mes - Topes planeados - Excesos fuera de tope - Gastos sin tope - Deuda TC anterior pagada
     const disponibleRealParaGastar = Math.max(
       0,
-      ingresosMesActual -
+      saldoMesAnterior +
+        ingresosMesActual -
         ahorroMesActual -
         totalBudgetLimit -
         overBudgetTotal -
+        gastosSinTopeMesActual -
         deudaTcAnteriorPagadaEsteMes
     );
+    const money = (n: number) => `$${n.toLocaleString("es-CO")}`;
 
     const recentRecords = [
       ...validExpenses.map((e) => ({
@@ -273,7 +303,9 @@ export async function getSpaceFullContext(getDb: () => Firestore, spaceId: strin
       numActiveMonths,
       financialSummary: {
         disponibleRealParaGastar,
-        formulaDisponibleReal: `Ingresos ($${ingresosMesActual.toLocaleString("es-CO")}) - Ahorro mes ($${ahorroMesActual.toLocaleString("es-CO")}) - Topes planeados ($${totalBudgetLimit.toLocaleString("es-CO")}) - Excesos fuera de tope ($${overBudgetTotal.toLocaleString("es-CO")}) - Deuda TC anterior pagada ($${deudaTcAnteriorPagadaEsteMes.toLocaleString("es-CO")})`,
+        formulaDisponibleReal: `${saldoMesAnterior > 0 ? `Saldo del mes anterior (${money(saldoMesAnterior)}) + ` : ""}Ingresos (${money(ingresosMesActual)}) - Ahorro mes (${money(ahorroMesActual)}) - Topes planeados (${money(totalBudgetLimit)}) - Excesos fuera de tope (${money(overBudgetTotal)})${gastosSinTopeMesActual > 0 ? ` - Gastos sin tope (${money(gastosSinTopeMesActual)})` : ""} - Deuda TC anterior pagada (${money(deudaTcAnteriorPagadaEsteMes)})`,
+        saldoMesAnterior,
+        gastosSinTopeMesActual,
         ingresosMesActual,
         gastosConsumoRealMesActual,
         gastosDebitoEfectivoMesActual,

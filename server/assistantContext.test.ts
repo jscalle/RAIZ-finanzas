@@ -135,4 +135,41 @@ describe('getSpaceFullContext', () => {
     expect(ctx?.recentRecords[0]).toMatchObject({ amount: 30000, date: '2026-11-04' });
     expect(ctx?.recentRecords.some((r) => r.amount === 999999)).toBe(false);
   });
+
+  it('carries the balance of earlier months into the available figure and subtracts spending without a limit', async () => {
+    const db = createFakeDb(
+      { startingSavings: 1000 },
+      {
+        topics: [doc('topic_salario', { name: 'Salario', type: 'INCOME' }), doc('topic_ocio', { name: 'Ocio', type: 'EXPENSE' })],
+        expenses: [doc('e1', { amount: 130000, topicId: 'topic_ocio', date: '2026-11-03', paymentMethod: 'DEBITO', source: 'INGRESOS' })],
+        incomes: [doc('i1', { amount: 1500000, topicId: 'topic_salario', date: '2026-10-30', method: 'DIGITAL', confirmed: true })],
+      }
+    );
+    const ctx = await getSpaceFullContext(() => db, 'espacio');
+    expect(ctx?.financialSummary).toMatchObject({
+      saldoMesAnterior: 1500000,
+      ingresosMesActual: 0,
+      gastosSinTopeMesActual: 130000,
+      disponibleRealParaGastar: 1370000,
+    });
+    expect(ctx?.financialSummary.formulaDisponibleReal).toContain('Saldo del mes anterior ($1.500.000)');
+    expect(ctx?.financialSummary.formulaDisponibleReal).toContain('Gastos sin tope ($130.000)');
+  });
+
+  it('does not count savings-funded spending or card payments as spending without a limit', async () => {
+    const db = createFakeDb(
+      {},
+      {
+        topics: [doc('t1', { name: 'Ocio', type: 'EXPENSE' })],
+        expenses: [
+          doc('a', { amount: 500, topicId: 't1', date: '2026-11-02', paymentMethod: 'DEBITO', source: 'AHORROS' }),
+          doc('b', { amount: 700, topicId: 'topic_1787580821277', date: '2026-11-02', paymentMethod: 'DEBITO', source: 'INGRESOS' }),
+          doc('c', { amount: 40, topicId: 't1', date: '2026-11-02', paymentMethod: 'DEBITO', source: 'INGRESOS' }),
+        ],
+        incomes: [doc('i', { amount: 1000, topicId: 'x', date: '2026-11-01', method: 'DIGITAL', confirmed: true })],
+      }
+    );
+    const ctx = await getSpaceFullContext(() => db, 'espacio');
+    expect(ctx?.financialSummary.gastosSinTopeMesActual).toBe(40);
+  });
 });

@@ -73,6 +73,79 @@ describe('DashboardSection', () => {
     expect(screen.getByText('$3,400')).toBeInTheDocument();
   });
 
+  describe('balance carried over from earlier months and spending without a limit', () => {
+    const exp = (over: Partial<Expense>): Expense =>
+      ({
+        id: 'e1',
+        description: 'x',
+        amount: 300,
+        topicId: 'rent',
+        date: '2024-01-10',
+        source: 'INGRESOS',
+        confirmed: true,
+        paymentMethod: 'DEBITO',
+        ...over,
+      }) as Expense;
+    const totals = { ingreso: 4000, gasto: 1000, ahorro: 500 };
+
+    it('adds the balance from the previous month to the headline and says so in a small subtitle', () => {
+      render(<DashboardSection {...buildProps({ totals, carryOver: 1500 })} />);
+      // 1500 + 4000 - 500 - 100 = 4900
+      expect(screen.getByText('$4,900')).toBeInTheDocument();
+      expect(
+        screen.getByText('Incluye $1,500 del mes anterior')
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Saldo del mes anterior \(\$1,500\)/)
+      ).toBeInTheDocument();
+    });
+
+    it('shows no carry-over text and keeps the old number when nothing carries over', () => {
+      render(<DashboardSection {...buildProps({ totals, carryOver: 0 })} />);
+      expect(screen.getByText('$3,400')).toBeInTheDocument();
+      expect(screen.queryByText(/del mes anterior/)).toBeNull();
+    });
+
+    it('subtracts spending in categories that have no limit', () => {
+      // 4000 - 500 - 100 - 300 (Arriendo has no limit) = 3100
+      render(
+        <DashboardSection {...buildProps({ totals, expenses: [exp({})] })} />
+      );
+      expect(screen.getByText('$3,100')).toBeInTheDocument();
+    });
+
+    it('subtracts spending whose category no longer exists, but not spending funded from savings', () => {
+      const expenses = [
+        exp({ id: 'a', topicId: 'default', amount: 200 }),
+        exp({ id: 'b', topicId: 'rent', amount: 999, source: 'AHORROS' }),
+      ];
+      // only the 200 counts: 4000 - 500 - 100 - 200 = 3200
+      render(<DashboardSection {...buildProps({ totals, expenses })} />);
+      expect(screen.getByText('$3,200')).toBeInTheDocument();
+    });
+
+    it('counts a credit card payment once (as prior card debt), not again as spending without a limit', () => {
+      const expenses = [
+        exp({ id: 'c', topicId: 'topic_1787580821277', amount: 999 }),
+      ];
+      // 4000 - 500 - 100 - 999 = 2401
+      render(<DashboardSection {...buildProps({ totals, expenses })} />);
+      expect(screen.getByText('$2,401')).toBeInTheDocument();
+    });
+
+    it('never goes below zero', () => {
+      render(
+        <DashboardSection
+          {...buildProps({
+            totals: { ingreso: 0, gasto: 0, ahorro: 0 },
+            expenses: [exp({ amount: 5000 })],
+          })}
+        />
+      );
+      expect(screen.getAllByText('$0').length).toBeGreaterThan(0);
+    });
+  });
+
   it('keeps phone layouts from overflowing the screen with long descriptions', () => {
     // jsdom has no layout engine, so pin the classes that prevent the overflow:
     // an unnamed grid column grows to its widest unbreakable text (e.g. a long

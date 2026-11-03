@@ -310,6 +310,59 @@ describe('App integration', () => {
     expect(screen.getAllByText('$600').length).toBeGreaterThan(0);
   });
 
+  describe('balance carried over from the previous month', () => {
+    const augustIncome = {
+      id: 'inc_a',
+      description: 'Sueldo',
+      amount: 1000,
+      topicId: 'topic_salario',
+      date: '2026-08-30',
+      confirmed: true,
+      method: 'DIGITAL',
+    };
+    const septemberExpense = {
+      id: 'exp_a',
+      description: 'Mercado',
+      amount: 400,
+      topicId: 'topic_comida',
+      date: '2026-09-03',
+      source: 'INGRESOS',
+      confirmed: true,
+      paymentMethod: 'DEBITO',
+    };
+    const seed = (activeMonth: string) =>
+      seedProfile({
+        activeMonth,
+        startingSavings: 0,
+        topics: [{ ...expenseTopic, monthlyLimit: 0 }],
+        incomes: [augustIncome],
+        expenses: [septemberExpense],
+        contributions: [],
+        withdrawals: [],
+        goals: [],
+      });
+
+    it('counts what was left from August as available in September, with a small note, minus the new spending', () => {
+      seed('2026-09');
+      render(<App />);
+      // 1000 (left from August) + 0 (September income) - 400 (spending without a limit) = 600
+      expect(screen.getAllByText('$600').length).toBeGreaterThan(0);
+      expect(
+        screen.getByText('Incluye $1.000 del mes anterior')
+      ).toBeInTheDocument();
+    });
+
+    it('shows no carry-over note in the first month with data or when viewing everything', () => {
+      seed('2026-08');
+      const { unmount } = render(<App />);
+      expect(screen.queryByText(/del mes anterior/)).toBeNull();
+      unmount();
+      seed('all');
+      render(<App />);
+      expect(screen.queryByText(/del mes anterior/)).toBeNull();
+    });
+  });
+
   it('masks currency values when privacy mode is active', () => {
     seedProfile({
       activeMonth: '2026-08',

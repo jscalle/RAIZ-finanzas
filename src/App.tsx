@@ -1292,6 +1292,22 @@ export default function App() {
     totalContributions,
   } = calculateDerivedState();
 
+  // What is left over from earlier months: everything earned minus everything spent up to the
+  // end of the previous month, so it counts as available in the month being viewed.
+  const carryOver = (() => {
+    if (activeMonth === 'all') return 0;
+    const upToPrevious = (date: string) =>
+      date.substring(0, 7) <= decrementMonth(activeMonth);
+    const previous = calculateFinancials(
+      incomes.filter((i) => upToPrevious(i.date)),
+      expenses.filter((e) => upToPrevious(e.date)),
+      contributions.filter((c) => upToPrevious(c.date)),
+      withdrawals.filter((w) => upToPrevious(w.date)),
+      startingSavings
+    );
+    return Math.max(0, previous.currentIncomesPool + previous.cashPool);
+  })();
+
   // Monthly flow arrays (only transactions inside the current activeMonth)
   const filteredIncomes =
     activeMonth === 'all'
@@ -2619,6 +2635,7 @@ export default function App() {
                   activeMonth={activeMonth}
                   setActiveMonth={setActiveMonth}
                   capitalDisponible={capitalDisponible}
+                  carryOver={carryOver}
                   cashPool={cashPool}
                   totals={totals}
                   recentTransactions={recentTransactions}
