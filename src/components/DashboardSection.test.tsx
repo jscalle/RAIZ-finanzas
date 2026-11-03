@@ -1,8 +1,10 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import DashboardSection from './DashboardSection';
 import { Expense, SavingGoal, Topic } from '../types';
+
+const INFO_AVAILABLE = 'Más información sobre el disponible real para gastar';
 
 // A deterministic currency formatter so assertions can match exact text.
 const formatCurrency = (amount: number) => `$${amount.toLocaleString('en-US')}`;
@@ -65,11 +67,7 @@ describe('DashboardSection', () => {
         {...buildProps({ totals: { ingreso: 4000, gasto: 1000, ahorro: 500 } })}
       />
     );
-    expect(
-      screen.getByText(
-        'Disponible Real para Gastar (Libre después de Topes y Ahorro)'
-      )
-    ).toBeInTheDocument();
+    expect(screen.getByText('Disponible real para gastar')).toBeInTheDocument();
     expect(screen.getByText('$3,400')).toBeInTheDocument();
   });
 
@@ -95,6 +93,9 @@ describe('DashboardSection', () => {
       expect(
         screen.getByText('Incluye $1,500 del mes anterior')
       ).toBeInTheDocument();
+      // The formula is one tap away, not on the screen all the time.
+      expect(screen.queryByText(/Saldo del mes anterior/)).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: INFO_AVAILABLE }));
       expect(
         screen.getByText(/Saldo del mes anterior \(\$1,500\)/)
       ).toBeInTheDocument();
@@ -143,6 +144,87 @@ describe('DashboardSection', () => {
         />
       );
       expect(screen.getAllByText('$0').length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('explanations behind the (i) buttons', () => {
+    it('keeps the long descriptions off the screen until someone taps (i)', () => {
+      render(<DashboardSection {...buildProps()} />);
+      for (const text of [
+        /Cálculo:/,
+        /Suma de las compras registradas/,
+        /Calibración de Topes/,
+        /Promedio Mensual Real/,
+      ]) {
+        expect(screen.queryByText(text)).toBeNull();
+      }
+    });
+
+    it('explains the available figure and its calculation', () => {
+      render(<DashboardSection {...buildProps()} />);
+      fireEvent.click(screen.getByRole('button', { name: INFO_AVAILABLE }));
+      const dialog = screen.getByRole('dialog', {
+        name: 'Disponible real para gastar',
+      });
+      expect(
+        within(dialog).getByText(/Cálculo: Ingresos \(\$4,000\)/)
+      ).toBeInTheDocument();
+      expect(
+        within(dialog).getByText(/lo que te queda libre/i)
+      ).toBeInTheDocument();
+    });
+
+    it('explains the unpaid card purchases and how the limits per category work', () => {
+      render(<DashboardSection {...buildProps()} />);
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Más información sobre las compras con TC sin cruzar',
+        })
+      );
+      expect(
+        screen.getByText(/Suma de las compras registradas/)
+      ).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Más información sobre el presupuesto por categoría',
+        })
+      );
+      expect(screen.getByText(/Promedio Mensual Real/)).toBeInTheDocument();
+    });
+
+    it('shows how it was paid this month as three plain rows with their amounts', () => {
+      const expenses = [
+        {
+          id: 'a',
+          description: 'x',
+          amount: 100,
+          topicId: 'rent',
+          date: '2024-01-10',
+          source: 'INGRESOS',
+          confirmed: true,
+          paymentMethod: 'DEBITO',
+        },
+        {
+          id: 'b',
+          description: 'y',
+          amount: 70,
+          topicId: 'rent',
+          date: '2024-01-11',
+          source: 'INGRESOS',
+          confirmed: true,
+          paymentMethod: 'CREDITO',
+        },
+      ] as Expense[];
+      render(<DashboardSection {...buildProps({ expenses })} />);
+      const card = screen.getByText('Cómo pagaste este mes').parentElement!;
+      expect(within(card).getByText('Débito / Efectivo')).toBeInTheDocument();
+      expect(within(card).getByText('$100')).toBeInTheDocument();
+      expect(
+        within(card).getByText('Compras con tarjeta de crédito')
+      ).toBeInTheDocument();
+      expect(within(card).getByText('$70')).toBeInTheDocument();
+      expect(within(card).getByText('Pagos a tarjetas')).toBeInTheDocument();
     });
   });
 

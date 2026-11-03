@@ -3,6 +3,7 @@ import { Circle, Plus, Wallet } from 'lucide-react';
 import { Expense, SavingGoal, Topic } from '../types';
 import { ICON_REGISTRY } from './iconRegistry';
 import CategoryBudget from './CategoryBudget';
+import { InfoTip } from './InfoTip';
 
 interface DashboardSectionProps {
   expenses: Expense[];
@@ -222,7 +223,7 @@ export default function DashboardSection({
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-muted-foreground">
-            Resumen del mes
+            Dashboard del mes
           </p>
           <h1 className="mt-1 font-display text-3xl font-bold tracking-tight md:text-4xl">
             Tu panorama financiero
@@ -238,9 +239,36 @@ export default function DashboardSection({
       <section className="rounded-3xl border border-border bg-card p-6 md:p-8">
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <p className="text-sm font-medium text-emerald-400">
-              Disponible Real para Gastar (Libre después de Topes y Ahorro)
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-medium text-emerald-400">
+                Disponible real para gastar
+              </p>
+              <InfoTip
+                label="Más información sobre el disponible real para gastar"
+                title="Disponible real para gastar"
+              >
+                <p>
+                  Es lo que te queda libre este mes, después de separar tus
+                  topes planeados y tu ahorro.
+                </p>
+                <p className="mt-2">
+                  Cálculo:{' '}
+                  {carryOver > 0
+                    ? `Saldo del mes anterior (${formatCurrency(carryOver)}) + `
+                    : ''}
+                  Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes (
+                  {formatCurrency(totals.ahorro)}) − Topes planeados (
+                  {formatCurrency(totalBudgetLimit)}) − Excesos fuera de tope (
+                  {formatCurrency(overBudgetTotal)})
+                  {unbudgetedSpendMonth > 0
+                    ? ` − Gastos sin tope (${formatCurrency(unbudgetedSpendMonth)})`
+                    : ''}
+                  {netPriorTcDebtPaidThisMonth > 0
+                    ? ` − Deuda TC anterior pagada (${formatCurrency(netPriorTcDebtPaidThisMonth)})`
+                    : ''}
+                </p>
+              </InfoTip>
+            </div>
             <p className="mt-1 font-display text-5xl font-bold tracking-tight text-foreground">
               {formatCurrency(disponibleRealParaGastar)}
             </p>
@@ -249,28 +277,12 @@ export default function DashboardSection({
                 {`Incluye ${formatCurrency(carryOver)} del mes anterior`}
               </p>
             )}
-            <p className="mt-2 text-xs text-muted-foreground leading-relaxed max-w-xl">
-              Cálculo:{' '}
-              {carryOver > 0
-                ? `Saldo del mes anterior (${formatCurrency(carryOver)}) + `
-                : ''}
-              Ingresos ({formatCurrency(totals.ingreso)}) − Ahorro mes (
-              {formatCurrency(totals.ahorro)}) − Topes planeados (
-              {formatCurrency(totalBudgetLimit)}) − Excesos fuera de tope (
-              {formatCurrency(overBudgetTotal)})
-              {unbudgetedSpendMonth > 0
-                ? ` − Gastos sin tope (${formatCurrency(unbudgetedSpendMonth)})`
-                : ''}
-              {netPriorTcDebtPaidThisMonth > 0
-                ? ` − Deuda TC anterior pagada (${formatCurrency(netPriorTcDebtPaidThisMonth)})`
-                : ''}
-            </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Ahorro acumulado en metas:{' '}
+              Ahorro en metas:{' '}
               <span className="font-mono font-semibold text-savings">
                 {formatCurrency(totalSavingsPool)}
               </span>{' '}
-              · Tasa de ahorro del mes:{' '}
+              · Tasa de ahorro:{' '}
               <span className="font-semibold text-savings">{savingsRate}%</span>
             </p>
           </div>
@@ -330,58 +342,57 @@ export default function DashboardSection({
         })}
       </section>
 
-      {/* Dynamic Execution & Credit Card Control (No static pockets) */}
-      <section className="rounded-3xl border border-border bg-card p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
-          <div>
+      {/* Limits vs real spending, and how it was paid */}
+      <section className="space-y-5 rounded-3xl border border-border bg-card p-6">
+        <div className="border-b border-border pb-4">
+          <div className="flex items-center gap-1.5">
             <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-              Estado de Topes Planeados vs. Gasto Real del Mes
+              Topes del mes
             </p>
-            <h2 className="mt-1 font-display text-xl font-bold text-foreground">
-              Reserva en Topes aún por Ejecutar:{' '}
-              {formatCurrency(unspentWithinLimitsTotal)}
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Has ejecutado {formatCurrency(realConsumptionMonth)} de{' '}
-              {formatCurrency(totalBudgetLimit)} planeados en topes · Excesos
-              fuera de tope:{' '}
-              <span className="font-semibold text-rose-400">
-                {formatCurrency(overBudgetTotal)}
-              </span>
-            </p>
+            <InfoTip
+              label="Más información sobre los topes del mes"
+              title="Topes del mes"
+            >
+              Compara lo que planeaste gastar en cada categoría (los topes)
+              contra lo que has gastado de verdad este mes. Lo que sobra dentro
+              de los topes es tu reserva; lo que pasa de un tope es un exceso.
+            </InfoTip>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 font-medium text-emerald-400">
-              Pagado con Débito / Efectivo: {formatCurrency(debitAndCashMonth)}
+          <h2 className="mt-1 font-display text-xl font-bold text-foreground">
+            Reserva en Topes aún por Ejecutar:{' '}
+            {formatCurrency(unspentWithinLimitsTotal)}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Has ejecutado {formatCurrency(realConsumptionMonth)} de{' '}
+            {formatCurrency(totalBudgetLimit)} planeados · Excesos:{' '}
+            <span className="font-semibold text-rose-400">
+              {formatCurrency(overBudgetTotal)}
             </span>
-            <span className="rounded-full bg-amber-500/10 border border-amber-500/30 px-3 py-1 font-medium text-amber-400">
-              Compras con TC este mes: {formatCurrency(creditPurchasesMonth)}
-            </span>
-            <span className="rounded-full bg-cyan-500/10 border border-cyan-500/30 px-3 py-1 font-medium text-cyan-400">
-              Pagos a Tarjetas este mes: {formatCurrency(tcPaymentsMonth)}
-            </span>
-          </div>
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="min-w-0 rounded-2xl border border-border bg-background/50 p-4 space-y-2">
+          <div className="min-w-0 space-y-2 rounded-2xl border border-border bg-background/50 p-4">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-bold text-foreground">
-                💳 Compras con TC en la App sin Cruzar
+              <span className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                💳 Compras con TC sin cruzar
+                <InfoTip
+                  label="Más información sobre las compras con TC sin cruzar"
+                  title="Compras con TC sin cruzar"
+                >
+                  Suma de las compras registradas en la app con método{' '}
+                  <strong>CRÉDITO</strong> que aún no se han cruzado con un
+                  abono en <em>Tarjetas / Créditos</em>. Si un gasto de tarjeta
+                  se registró como Débito, cámbialo a Crédito en la pestaña
+                  Gastos para sumarlo aquí.
+                </InfoTip>
               </span>
               <span className="font-mono text-base font-bold text-amber-400">
                 {formatCurrency(unpaidCreditTotal)}
               </span>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Suma de las compras registradas en la app con método{' '}
-              <strong>CRÉDITO</strong> que aún no se han cruzado con un abono en{' '}
-              <em>Tarjetas/creditos</em>. (Si un gasto de TC se registró como
-              Débito, cámbialo a Crédito en la pestaña Gastos para sumarlo
-              aquí).
-            </p>
             {unpaidCreditPurchases.length > 0 && (
-              <ul className="pt-2 space-y-1 text-xs border-t border-border/60">
+              <ul className="space-y-1 border-t border-border/60 pt-2 text-xs">
                 {unpaidCreditPurchases.slice(0, 4).map((u) => (
                   <li
                     key={u.id}
@@ -390,7 +401,7 @@ export default function DashboardSection({
                     <span className="min-w-0 truncate pr-2">
                       • {u.description} ({u.date})
                     </span>
-                    <span className="font-mono font-semibold text-foreground shrink-0">
+                    <span className="shrink-0 font-mono font-semibold text-foreground">
                       {formatCurrency(u.amount)}
                     </span>
                   </li>
@@ -399,19 +410,31 @@ export default function DashboardSection({
             )}
           </div>
 
-          <div className="min-w-0 rounded-2xl border border-border bg-background/50 p-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-foreground">
-                📐 Cómo funciona tu Calibración de Topes
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Abajo, en cada categoría verás tu <strong>Gasto del Mes</strong>{' '}
-              frente al <strong>Tope Actual</strong> y tu{' '}
-              <strong>Promedio Mensual Real</strong>. Si tu promedio histórico
-              cambia frente al tope, puedes actualizar el tope con 1 clic para
-              saber exactamente cuánto reservar en tu banco cada mes.
+          <div className="min-w-0 space-y-2 rounded-2xl border border-border bg-background/50 p-4">
+            <p className="text-sm font-bold text-foreground">
+              Cómo pagaste este mes
             </p>
+            <dl className="space-y-1.5 text-sm">
+              {[
+                ['Débito / Efectivo', debitAndCashMonth, 'text-emerald-400'],
+                [
+                  'Compras con tarjeta de crédito',
+                  creditPurchasesMonth,
+                  'text-amber-400',
+                ],
+                ['Pagos a tarjetas', tcPaymentsMonth, 'text-cyan-400'],
+              ].map(([label, value, color]) => (
+                <div
+                  key={label as string}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className={`font-mono font-semibold ${color}`}>
+                    {formatCurrency(value as number)}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         </div>
       </section>
@@ -419,8 +442,18 @@ export default function DashboardSection({
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-5">
         {/* Budget by category */}
         <section className="min-w-0 lg:col-span-3">
-          <h2 className="mb-4 font-display text-lg font-bold">
+          <h2 className="mb-4 flex items-center gap-1.5 font-display text-lg font-bold">
             Presupuesto por categoría
+            <InfoTip
+              label="Más información sobre el presupuesto por categoría"
+              title="Presupuesto por categoría"
+            >
+              En cada categoría ves tu <strong>Gasto del Mes</strong> frente al{' '}
+              <strong>Tope Actual</strong> y tu{' '}
+              <strong>Promedio Mensual Real</strong>. Si tu promedio histórico
+              cambia frente al tope, puedes actualizarlo con 1 clic para saber
+              cuánto reservar cada mes.
+            </InfoTip>
           </h2>
           <CategoryBudget
             expenses={confirmedMonthExpenses}
