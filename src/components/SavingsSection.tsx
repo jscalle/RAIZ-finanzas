@@ -16,6 +16,7 @@ import {
 import { SavingGoal, SavingContribution, Topic } from '../types';
 import { renderIcon } from './renderIcon';
 import { parseFormattedNumber } from '../lib/mathEngine';
+import { InfoTip } from './InfoTip';
 
 interface SavingsSectionProps {
   goals: SavingGoal[];
@@ -273,11 +274,14 @@ export default function SavingsSection({
           <h2 className="text-xl font-light text-foreground flex items-center gap-2">
             <PiggyBank className="h-5 w-5 text-pink-400" />
             Plan de Ahorros y Metas
+            <InfoTip
+              label="Más información sobre el plan de ahorros y metas"
+              title="Plan de Ahorros y Metas"
+            >
+              Constituye un colchón financiero y define metas claras. Reasigna
+              ingresos corrientes hacia tus fondos de ahorro.
+            </InfoTip>
           </h2>
-          <p className="text-xs text-muted-foreground/80 mt-1">
-            Constituye un colchón financiero y define metas claras. Reasigna
-            ingresos corrientes hacia tus fondos de ahorro.
-          </p>
         </div>
         <div className="flex gap-2 w-full sm:w-auto">
           <button

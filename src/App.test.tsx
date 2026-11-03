@@ -299,6 +299,81 @@ describe('App integration', () => {
     expect(await screen.findByText('Gestión de Ingresos')).toBeInTheDocument();
   });
 
+  it('keeps each section description behind an (i) button until someone taps it', async () => {
+    render(<App />);
+    const sections: Array<{
+      open: () => void;
+      heading: string;
+      tips: Array<[string, RegExp]>;
+    }> = [
+      {
+        open: () =>
+          fireEvent.click(
+            screen.getByRole('button', { name: /Ingresos y Cajero/i })
+          ),
+        heading: 'Gestión de Ingresos',
+        tips: [
+          [
+            'Más información sobre la gestión de ingresos',
+            /Registra tus entradas de dinero/,
+          ],
+          [
+            'Más información sobre los retiros de cajero',
+            /se agrega a tu caja de/,
+          ],
+        ],
+      },
+      {
+        open: () =>
+          fireEvent.click(
+            screen.getAllByRole('button', { name: /Gastos/i })[0]
+          ),
+        heading: 'Control de Gastos',
+        tips: [
+          [
+            'Más información sobre el control de gastos',
+            /Reconcilia tus desembolsos/,
+          ],
+        ],
+      },
+      {
+        open: () =>
+          fireEvent.click(
+            screen.getByRole('button', { name: /Metas de Ahorro/i })
+          ),
+        heading: 'Plan de Ahorros y Metas',
+        tips: [
+          [
+            'Más información sobre el plan de ahorros y metas',
+            /Constituye un colchón financiero/,
+          ],
+        ],
+      },
+      {
+        open: () =>
+          fireEvent.click(screen.getByRole('button', { name: /Categorías/i })),
+        heading: 'Configuración de Tópicos',
+        tips: [
+          [
+            'Más información sobre las categorías',
+            /Crea y administra las categorías/,
+          ],
+        ],
+      },
+    ];
+    for (const section of sections) {
+      section.open();
+      expect(await screen.findByText(section.heading)).toBeInTheDocument();
+      for (const [label, text] of section.tips) {
+        expect(screen.queryByText(text)).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: label }));
+        expect(screen.getByText(text)).toBeInTheDocument();
+        fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByText(text)).toBeNull();
+      }
+    }
+  });
+
   it('computes and displays dashboard totals from seeded local data', () => {
     // Deterministic August 2026 dataset: one confirmed digital income and one
     // confirmed digital expense drawn from incomes.

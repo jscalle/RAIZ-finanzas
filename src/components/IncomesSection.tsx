@@ -17,6 +17,7 @@ import {
 import { Income, Topic, Withdrawal } from '../types';
 import { renderIcon } from './renderIcon';
 import { parseFormattedNumber } from '../lib/mathEngine';
+import { InfoTip } from './InfoTip';
 
 const renderReconciliationBadge = (status?: string, source?: string) => {
   if (status === 'VERIFIED') {
@@ -326,11 +327,14 @@ export default function IncomesSection({
             <h2 className="text-xl font-light text-foreground flex items-center gap-2">
               <PlusCircle className="h-5 w-5 text-emerald-400" />
               Gestión de Ingresos
+              <InfoTip
+                label="Más información sobre la gestión de ingresos"
+                title="Gestión de Ingresos"
+              >
+                Registra tus entradas de dinero, marcando si se reciben por
+                transferencia digital o efectivo físico directo.
+              </InfoTip>
             </h2>
-            <p className="text-xs text-muted-foreground/80 mt-1">
-              Registra tus entradas de dinero, marcando si se reciben por
-              transferencia digital o efectivo físico directo.
-            </p>
           </div>
           <button
             onClick={handleOpenAddIncome}
@@ -556,12 +560,15 @@ export default function IncomesSection({
             <h2 className="text-lg font-light text-foreground flex items-center gap-2">
               <CreditCard className="h-5 w-5 text-cyan-400" />
               Retiros de Cajero Automático (ATM)
+              <InfoTip
+                label="Más información sobre los retiros de cajero"
+                title="Retiros de cajero"
+              >
+                Al retirar efectivo de un cajero automático, el dinero se
+                descuenta de tus cuentas digitales y se agrega a tu caja de{' '}
+                <strong>Efectivo en Mano</strong>.
+              </InfoTip>
             </h2>
-            <p className="text-xs text-muted-foreground/80 mt-1">
-              Al retirar efectivo de un cajero automático, el dinero se
-              descuenta de tus cuentas digitales y se agrega a tu caja de{' '}
-              <strong>Efectivo en Mano</strong>.
-            </p>
           </div>
           <button
             onClick={handleOpenAddWth}

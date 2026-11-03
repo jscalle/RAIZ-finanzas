@@ -19,6 +19,7 @@ import {
 import { Expense, Topic } from '../types';
 import { renderIcon } from './renderIcon';
 import { parseFormattedNumber, expensesByCategory } from '../lib/mathEngine';
+import { InfoTip } from './InfoTip';
 
 interface ExpensesSectionProps {
   expenses: Expense[];
@@ -266,12 +267,15 @@ export default function ExpensesSection({
           <h2 className="text-xl font-light text-foreground flex items-center gap-2">
             <MinusCircle className="h-5 w-5 text-rose-400" />
             Control de Gastos
+            <InfoTip
+              label="Más información sobre el control de gastos"
+              title="Control de Gastos"
+            >
+              Reconcilia tus desembolsos, seleccionando si pagas con Débito,
+              Crédito o Efectivo Físico, y cruza su origen entre ingresos
+              corrientes o ahorros acumulados.
+            </InfoTip>
           </h2>
-          <p className="text-xs text-muted-foreground/80 mt-1">
-            Reconcilia tus desembolsos, seleccionando si pagas con Débito,
-            Crédito o Efectivo Físico, y cruza su origen entre ingresos
-            corrientes o ahorros acumulados.
-          </p>
         </div>
         <button
           onClick={handleOpenAdd}

@@ -11,6 +11,7 @@ import {
 import { Topic } from '../types';
 import { renderIcon } from './renderIcon';
 import { AVAILABLE_ICONS } from './iconRegistry';
+import { InfoTip } from './InfoTip';
 
 interface TopicsConfigProps {
   topics: Topic[];
@@ -181,11 +182,14 @@ export default function TopicsConfig({
           <h2 className="text-xl font-light text-foreground flex items-center gap-2">
             <Settings2 className="h-5 w-5 text-cyan-400" />
             Configuración de Tópicos
+            <InfoTip
+              label="Más información sobre las categorías"
+              title="Categorías"
+            >
+              Crea y administra las categorías aplicables a tus ingresos, gastos
+              o planes de ahorro.
+            </InfoTip>
           </h2>
-          <p className="text-xs text-muted-foreground/80 mt-1">
-            Crea y administra las categorías aplicables a tus ingresos, gastos o
-            planes de ahorro.
-          </p>
         </div>
         <button
           onClick={handleOpenAdd}
