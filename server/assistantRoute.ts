@@ -75,7 +75,9 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
 function validIsoDate(raw: unknown): string {
   const text = str(raw).trim();
   if (!text) return '';
-  const iso = normalizeDateToISO(text);
+  // A timestamp such as 2026-11-07T10:00:00Z keeps its calendar date.
+  const stamp = text.match(/^(\d{4}-\d{2}-\d{2})[T ]/);
+  const iso = stamp ? stamp[1] : normalizeDateToISO(text);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '';
   const d = new Date(`${iso}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso ? iso : '';

@@ -104,14 +104,16 @@ describe('handleAssistantMessage', () => {
   it('keeps valid dates, converts dd/mm/yyyy, and replaces impossible or free-text dates with today', async () => {
     const tx = (date: string) => ({ type: 'EXPENSE', amount: 10, category: 'Comida', date });
     const res = await run(
-      async () => JSON.stringify({ intent: 'RECORD', transactions: ['2026-11-05', '05/11/2026', '31/02/2026', '2026-13-40', 'ayer', ''].map(tx) }),
+      async () => JSON.stringify({ intent: 'RECORD', transactions: ['2026-11-05', '05/11/2026', '31/02/2026', '2026-13-40', 'ayer', '', '2026-11-07T10:00:00Z', '2026-11-08 09:30'].map(tx) }),
       { spaceId: 'mine', text: 'x' }
     );
     const dates = (res.body as any).drafts.map((d: any) => d.date);
     expect(dates.slice(0, 2)).toEqual(['2026-11-05', '2026-11-05']);
     const today = dates[5];
     expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(dates.slice(2)).toEqual([today, today, today, today]);
+    expect(dates.slice(2, 6)).toEqual([today, today, today, today]);
+    // a timestamp keeps its calendar date
+    expect(dates.slice(6)).toEqual(['2026-11-07', '2026-11-08']);
   });
 
   it('refuses callers outside the space before calling the model, and writes nothing', async () => {
@@ -209,6 +211,14 @@ describe('handleAssistantMessage', () => {
       const drafts = (res.body as any).drafts;
       expect(messages[2]).toMatchObject({ draftId: drafts[0].id, draft: { amount: 1000, category: 'Comida', type: 'EXPENSE', currency: 'COP', date: '2026-11-15' } });
       expect(messages[3].draftId).toBe(drafts[1].id);
+    });
+
+    it('gives replies ids that sort in display order even past nine replies', async () => {
+      const res = await run(async () => record(12), { spaceId: 'mine', text: 'muchos' });
+      const byCreated = res.thread.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((m) => m.__id);
+      const byId = res.thread.map((m) => m.__id).sort();
+      expect(byId).toEqual(byCreated);
+      expect(res.thread).toHaveLength(1 + 1 + 12);
     });
 
     it('keeps each user thread separate', async () => {

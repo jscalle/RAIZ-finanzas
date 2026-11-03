@@ -50,9 +50,9 @@ export const COPY = {
 
 export const newRandomId = (): string => randomBytes(3).toString('hex');
 
-/** Time-sortable and unique: base-36 millisecond time, the request's random part, a counter. */
+/** Time-sortable and unique: base-36 millisecond time, the request's random part, a padded counter. */
 export const messageIdFor = (base: Date, rand: string, n: number): string =>
-  `m${base.getTime().toString(36)}_${rand}_${n}`;
+  `m${base.getTime().toString(36)}_${rand}_${String(n).padStart(3, '0')}`;
 
 export function threadMessages(db: Firestore, spaceId: string, uid: string) {
   return db
