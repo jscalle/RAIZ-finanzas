@@ -216,7 +216,10 @@ export async function assertSpaceMember(
   spaceId: unknown,
   uid: string
 ): Promise<MemberCheck> {
-  if (!isValidSpaceId(spaceId)) return { ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } };
+  // "." and ".." and ids like "__x__" are reserved by Firestore and would throw on .doc().
+  if (!isValidSpaceId(spaceId) || spaceId === '.' || spaceId === '..' || /^__.*__$/.test(spaceId)) {
+    return { ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } };
+  }
   const snap = await getDb().collection('spaces').doc(spaceId).get();
   if (!snap.exists) return { ok: false, httpStatus: 404, body: { error: 'space_not_found' } };
   const space = (snap.data() ?? {}) as SpaceDoc;

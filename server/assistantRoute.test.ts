@@ -86,6 +86,30 @@ describe('handleAssistantMessage', () => {
     expect((res.body as any).drafts[0]).toMatchObject({ amount: 45000, paymentMethod: 'EFECTIVO' });
   });
 
+  it('does not fail when the model answers something that is not an object', async () => {
+    for (const raw of ['null', '[]', '"texto"', '5']) {
+      const res = await run(async () => raw, { spaceId: 'mine', text: 'hola' });
+      expect(res.httpStatus).toBe(200);
+      expect(res.body).toMatchObject({ drafts: [], intent: null });
+      expect(res.writes).toEqual([]);
+    }
+  });
+
+  it('drops malformed transactions and caps the number of drafts', async () => {
+    const good = (n: number) => ({ type: 'EXPENSE', amount: n, category: 'Comida', description: `g${n}` });
+    const junk = [null, 'x', 7, { amount: 'abc' }, { amount: 1e999 }, { amount: '1e999' }, { amount: null }, { amount: '' }, { amount: 0 }, { amount: -50 }, { description: 'sin monto' }, { amount: 5, category: { a: 1 }, date: 20261115, description: ['x'] }];
+    const many = Array.from({ length: 30 }, (_, i) => good(i + 1));
+    const res = await run(async () => JSON.stringify({ intent: 'RECORD', transactions: [...junk, ...many] }), { spaceId: 'mine', text: 'hola' });
+    expect(res.httpStatus).toBe(200);
+    const drafts = (res.body as any).drafts;
+    expect(drafts).toHaveLength(20);
+    // the one junk entry with a finite amount survives with safe defaults
+    expect(drafts[0]).toMatchObject({ amount: 5, category: 'Comida' });
+    expect(drafts[0].date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(drafts.every((d: any) => Number.isFinite(d.amount) && d.amount > 0)).toBe(true);
+    expect(res.writes).toHaveLength(20);
+  });
+
   it('refuses callers outside the space before calling the model', async () => {
     const generate = vi.fn();
     const res = await run(generate, { spaceId: 'mine', text: 'hola' }, 'stranger');

@@ -15,6 +15,8 @@ import {
 import type { GenerateFn } from './assistantService';
 
 export const MAX_ASSISTANT_TEXT_LENGTH = 2000;
+/** One message never creates more drafts than this, whatever the model answers. */
+export const MAX_ASSISTANT_DRAFTS = 20;
 // 10 MB attachment cap -> about 13.4 MB of base64, plus the JSON around it.
 export const ASSISTANT_BODY_LIMIT = '15mb';
 
@@ -53,6 +55,37 @@ export function assistantBodyParser(): express.RequestHandler[] {
 export interface AssistantRouteResult {
   httpStatus: number;
   body: unknown;
+}
+
+const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+/** Keeps only transactions with a finite amount above zero and forces the text fields to be strings. */
+function sanitizeTransactions(raw: unknown): any[] {
+  if (!Array.isArray(raw)) return [];
+  const out: any[] = [];
+  for (const t of raw) {
+    if (out.length >= MAX_ASSISTANT_DRAFTS) break;
+    if (typeof t !== 'object' || t === null) continue;
+    const amount =
+      typeof t.amount === 'number'
+        ? t.amount
+        : typeof t.amount === 'string' && t.amount.trim() !== ''
+          ? Number(t.amount)
+          : NaN;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    out.push({
+      ...t,
+      amount,
+      type: t.type === 'INCOME' ? 'INCOME' : 'EXPENSE',
+      currency: str(t.currency),
+      description: str(t.description),
+      category: str(t.category),
+      paymentMethod: str(t.paymentMethod),
+      date: str(t.date),
+      explanation: str(t.explanation),
+    });
+  }
+  return out;
 }
 
 const bad = (error: string): AssistantRouteResult => ({ httpStatus: 400, body: { error } });
@@ -100,9 +133,9 @@ export async function handleAssistantMessage(
   const ctx = await loadAssistantContext(deps.getDb, spaceId as string);
   const { parsed, usedFallback } = await runAssistantModel(deps, ctx, { text, media });
 
-  const transactions: any[] = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+  const answer: Record<string, unknown> = parsed && typeof parsed === 'object' ? parsed : {};
   const drafts = buildDrafts({
-    transactions,
+    transactions: sanitizeTransactions(answer.transactions),
     topics: ctx.topics,
     spaceId: spaceId as string,
     text,
@@ -115,9 +148,9 @@ export async function handleAssistantMessage(
   return {
     httpStatus: 200,
     body: {
-      intent: parsed.intent ?? null,
-      chatResponse: parsed.chatResponse || '',
-      skippedSummary: parsed.skippedSummary || '',
+      intent: typeof answer.intent === 'string' ? answer.intent : null,
+      chatResponse: str(answer.chatResponse),
+      skippedSummary: str(answer.skippedSummary),
       drafts,
       usedFallback,
     },

@@ -156,6 +156,9 @@ describe('assertSpaceMember', () => {
     expect(await assertSpaceMember(() => db, 'nope', 'owner')).toEqual({ ok: false, httpStatus: 404, body: { error: 'space_not_found' } });
     expect(await assertSpaceMember(() => db, 'a/b', 'owner')).toEqual({ ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } });
     expect(await assertSpaceMember(() => db, undefined, 'owner')).toMatchObject({ ok: false, httpStatus: 400 });
+    for (const id of ['.', '..', '__reserved__']) {
+      expect(await assertSpaceMember(() => db, id, 'owner')).toEqual({ ok: false, httpStatus: 400, body: { error: 'invalid_space_id' } });
+    }
   });
 });
 
