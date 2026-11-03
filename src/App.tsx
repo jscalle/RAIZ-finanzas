@@ -13,6 +13,7 @@ import {
   Menu,
   RefreshCw,
   Shapes,
+  Sprout,
   Target,
   TrendingDown,
   TrendingUp,
@@ -34,6 +35,7 @@ const ExpensesSection = lazy(() => import('./components/ExpensesSection'));
 const SavingsSection = lazy(() => import('./components/SavingsSection'));
 
 const TopicsConfig = lazy(() => import('./components/TopicsConfig'));
+const AssistantTab = lazy(() => import('./components/AssistantTab'));
 import EditPendingTransactionModal from './components/EditPendingTransactionModal';
 
 export const getColombiaDateISO = (): string => {
@@ -220,6 +222,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<
     | 'dashboard'
+    | 'assistant'
     | 'incomes'
     | 'expenses'
     | 'savings'
@@ -2187,6 +2190,12 @@ export default function App() {
                     icon: LayoutDashboard,
                   },
                   {
+                    id: 'assistant',
+                    label: 'Asistente',
+                    hint: 'Háblale o mándale una foto',
+                    icon: Sprout,
+                  },
+                  {
                     id: 'incomes',
                     label: 'Ingresos y Cajero',
                     hint: 'Entradas y efectivo',
@@ -2255,6 +2264,15 @@ export default function App() {
                         {tab.hint}
                       </span>
                     </div>
+                    {tab.id === 'assistant' &&
+                      pendingTransactions.length > 0 && (
+                        <span
+                          className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-primary-foreground"
+                          aria-label={`${pendingTransactions.length} por confirmar`}
+                        >
+                          {pendingTransactions.length}
+                        </span>
+                      )}
                   </button>
                 );
               })}
@@ -2320,8 +2338,8 @@ export default function App() {
         {(
           [
             { id: 'dashboard', label: 'Resumen', icon: LayoutDashboard },
-            { id: 'incomes', label: 'Ingresos', icon: TrendingUp },
             { id: 'expenses', label: 'Gastos', icon: TrendingDown },
+            { id: 'assistant', label: 'Asistente', icon: Sprout },
             { id: 'savings', label: 'Metas', icon: Target },
           ] as const
         ).map((tab) => {
@@ -2338,7 +2356,17 @@ export default function App() {
                 isSelected ? 'text-primary font-bold' : 'text-muted-foreground'
               }`}
             >
-              <Icon className="h-5 w-5 shrink-0" />
+              <span className="relative">
+                <Icon className="h-5 w-5 shrink-0" />
+                {tab.id === 'assistant' && pendingTransactions.length > 0 && (
+                  <span
+                    className="absolute -right-3 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground"
+                    aria-label={`${pendingTransactions.length} por confirmar`}
+                  >
+                    {pendingTransactions.length}
+                  </span>
+                )}
+              </span>
               <span className="text-[11px] font-medium leading-none">
                 {tab.label}
               </span>
@@ -2348,7 +2376,12 @@ export default function App() {
         <button
           onClick={() => setIsMoreSheetOpen(!isMoreSheetOpen)}
           className={`flex flex-col items-center justify-center w-full py-1 space-y-1 transition-colors ${
-            isMoreSheetOpen ? 'text-primary font-bold' : 'text-muted-foreground'
+            isMoreSheetOpen ||
+            activeTab === 'incomes' ||
+            activeTab === 'topics' ||
+            activeTab === 'sync_settings'
+              ? 'text-primary font-bold'
+              : 'text-muted-foreground'
           }`}
         >
           <Menu className="h-5 w-5 shrink-0" />
@@ -2377,6 +2410,28 @@ export default function App() {
               <div className="mx-auto mb-6 h-1.5 w-12 rounded-full bg-border" />
               <div className="grid gap-4">
                 <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Mi dinero
+                </p>
+                <button
+                  onClick={() => {
+                    setActiveTab('incomes');
+                    setIsMoreSheetOpen(false);
+                  }}
+                  className="flex items-center gap-4 rounded-2xl p-4 transition-colors hover:bg-muted"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <TrendingUp className="h-6 w-6" />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-semibold text-foreground">
+                      Ingresos y Cajero
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Entradas y efectivo
+                    </div>
+                  </div>
+                </button>
+                <p className="px-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Ajustes
                 </p>
                 <button
@@ -2464,56 +2519,58 @@ export default function App() {
             onSave={handleSaveEditedPendingTransaction}
           />
 
-          {/* MONTH NAVIGATOR */}
-          <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="inline-flex items-center bg-card border border-border rounded-full p-1 shadow-sm">
-              <button
-                onClick={() => {
-                  if (activeMonth !== 'all')
-                    setActiveMonth(decrementMonth(activeMonth));
-                }}
-                disabled={activeMonth === 'all'}
-                className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="w-32 md:w-40 text-center text-sm font-semibold text-foreground capitalize">
-                {getMonthLabel(activeMonth)}
-              </span>
-              <button
-                onClick={() => {
-                  if (activeMonth !== 'all')
-                    setActiveMonth(incrementMonth(activeMonth));
-                }}
-                disabled={activeMonth === 'all'}
-                className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
+          {/* MONTH NAVIGATOR (not used by the assistant chat) */}
+          {activeTab !== 'assistant' && (
+            <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="inline-flex items-center bg-card border border-border rounded-full p-1 shadow-sm">
+                <button
+                  onClick={() => {
+                    if (activeMonth !== 'all')
+                      setActiveMonth(decrementMonth(activeMonth));
+                  }}
+                  disabled={activeMonth === 'all'}
+                  className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <span className="w-32 md:w-40 text-center text-sm font-semibold text-foreground capitalize">
+                  {getMonthLabel(activeMonth)}
+                </span>
+                <button
+                  onClick={() => {
+                    if (activeMonth !== 'all')
+                      setActiveMonth(incrementMonth(activeMonth));
+                  }}
+                  disabled={activeMonth === 'all'}
+                  className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() =>
-                  setActiveMonth(activeMonth === 'all' ? '2026-08' : 'all')
-                }
-                className={`px-4 py-2 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
-                  activeMonth === 'all'
-                    ? 'bg-primary/10 text-primary border-primary/20'
-                    : 'bg-card text-muted-foreground border-border hover:bg-muted'
-                }`}
-              >
-                {activeMonth === 'all' ? 'Volver al Mes' : 'Ver Todo'}
-              </button>
-              <button
-                onClick={handleRefreshAllData}
-                className="hidden md:flex p-2 text-muted-foreground hover:bg-muted hover:text-foreground rounded-full transition-colors border border-transparent hover:border-border cursor-pointer"
-                title="Refrescar datos"
-              >
-                <RefreshCw className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() =>
+                    setActiveMonth(activeMonth === 'all' ? '2026-08' : 'all')
+                  }
+                  className={`px-4 py-2 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+                    activeMonth === 'all'
+                      ? 'bg-primary/10 text-primary border-primary/20'
+                      : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                  }`}
+                >
+                  {activeMonth === 'all' ? 'Volver al Mes' : 'Ver Todo'}
+                </button>
+                <button
+                  onClick={handleRefreshAllData}
+                  className="hidden md:flex p-2 text-muted-foreground hover:bg-muted hover:text-foreground rounded-full transition-colors border border-transparent hover:border-border cursor-pointer"
+                  title="Refrescar datos"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           <AnimatePresence mode="wait">
             <motion.div
@@ -2554,6 +2611,14 @@ export default function App() {
                   </div>
                 }
               >
+                {activeTab === 'assistant' && (
+                  <AssistantTab
+                    currentSpaceId={currentSpaceId}
+                    userUid={user?.uid}
+                    syncEnabled={syncEnabled}
+                    onOpenCloudSettings={() => setActiveTab('sync_settings')}
+                  />
+                )}
                 {activeTab === 'incomes' && (
                   <IncomesSection
                     incomes={filteredIncomes}

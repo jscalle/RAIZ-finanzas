@@ -7,7 +7,10 @@ import {
   getDoc,
   getDocs,
   getDocsFromServer,
+  limitToLast,
   onSnapshot,
+  orderBy,
+  query,
   setDoc,
   updateDoc,
   writeBatch,
@@ -99,6 +102,8 @@ vi.mock('firebase/firestore', () => ({
   updateDoc: vi.fn(),
   getDocFromServer: (...args: unknown[]) => h.getDocFromServer(...args),
   query: vi.fn(),
+  orderBy: vi.fn(),
+  limitToLast: vi.fn(),
   where: vi.fn(),
   getDocs: vi.fn(),
   getDocsFromServer: vi.fn(),
@@ -836,6 +841,189 @@ describe('space isolation client (S7-S10, contract C1/C2)', () => {
       });
 
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/refused/i), 403);
+    });
+  });
+});
+
+describe('in-app assistant client', () => {
+  const ID_TOKEN = 'firebase-id-token-xyz';
+  const authWithUser = firebase.auth as unknown as {
+    currentUser: { uid: string; getIdToken: () => Promise<string> } | null;
+  };
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    authWithUser.currentUser = {
+      uid: 'kid-uid',
+      getIdToken: async () => ID_TOKEN,
+    };
+    fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ messageId: 'm1_abc_000' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    authWithUser.currentUser = null;
+    vi.unstubAllGlobals();
+  });
+
+  describe('sendAssistantMessage', () => {
+    it('posts the message with the ID token and the normalized space id', async () => {
+      const result = await firebase.sendAssistantMessage('Espacio Familia', {
+        text: 'Almuerzo 45000',
+      });
+
+      expect(result).toEqual({ ok: true, messageId: 'm1_abc_000' });
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toMatch(/\/api\/assistant\/messages$/);
+      expect(init.method).toBe('POST');
+      expect(init.headers).toMatchObject({
+        Authorization: `Bearer ${ID_TOKEN}`,
+      });
+      expect(JSON.parse(String(init.body))).toEqual({
+        spaceId: firebase.normalizeSpaceId('Espacio Familia'),
+        text: 'Almuerzo 45000',
+      });
+    });
+
+    it('includes the attachment when there is one', async () => {
+      await firebase.sendAssistantMessage('espacio_familia', {
+        attachment: { mime: 'audio/webm', dataBase64: 'QUJD' },
+      });
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        attachment: { mime: 'audio/webm', dataBase64: 'QUJD' },
+      });
+    });
+
+    it('turns server error codes into plain Spanish, with the retry time', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: 'rate_limited', retryAfterSeconds: 120 }),
+      });
+      const result = await firebase.sendAssistantMessage('espacio_familia', {
+        text: 'hola',
+      });
+      expect(result).toMatchObject({ ok: false, code: 'rate_limited' });
+      expect(result.ok === false && result.message).toContain('2 min');
+    });
+
+    it('does not send anything when nobody is signed in', async () => {
+      authWithUser.currentUser = null;
+      const result = await firebase.sendAssistantMessage('espacio_familia', {
+        text: 'hola',
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(result.ok === false && result.message).toContain('iniciar sesión');
+    });
+
+    it('reports a connection problem when the request fails', async () => {
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+      const result = await firebase.sendAssistantMessage('espacio_familia', {
+        text: 'hola',
+      });
+      expect(result.ok === false && result.message).toContain('conectar');
+    });
+
+    it('survives an error body that is not JSON', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new SyntaxError('Unexpected token <');
+        },
+      });
+      const result = await firebase.sendAssistantMessage('espacio_familia', {
+        text: 'hola',
+      });
+      expect(result.ok === false && result.message).toContain('Algo salió mal');
+    });
+  });
+
+  describe('subscribeToAssistantThread', () => {
+    it('listens to the user thread ordered by time and delivers messages with their ids', () => {
+      let next: (snap: unknown) => void = () => {};
+      const unsubscribe = vi.fn();
+      vi.mocked(onSnapshot).mockImplementation(((
+        _q: unknown,
+        onNext: (s: unknown) => void
+      ) => {
+        next = onNext;
+        return unsubscribe;
+      }) as unknown as typeof onSnapshot);
+      vi.mocked(orderBy).mockReturnValue('ORDER' as never);
+      vi.mocked(limitToLast).mockReturnValue('LIMIT' as never);
+      vi.mocked(collection).mockReturnValue('COL' as never);
+      vi.mocked(query).mockReturnValue('QUERY' as never);
+
+      const received: unknown[] = [];
+      const stop = firebase.subscribeToAssistantThread(
+        'espacio_familia',
+        'kid-uid',
+        (m) => received.push(m)
+      );
+
+      expect(vi.mocked(collection).mock.calls.at(-1)?.slice(1)).toEqual([
+        'spaces',
+        'espacio_familia',
+        'assistant_threads',
+        'kid-uid',
+        'messages',
+      ]);
+      expect(vi.mocked(orderBy)).toHaveBeenCalledWith('createdAt', 'asc');
+      expect(vi.mocked(query)).toHaveBeenCalledWith('COL', 'ORDER', 'LIMIT');
+
+      next({
+        docs: [{ id: 'a', data: () => ({ role: 'user', text: 'hola' }) }],
+      });
+      expect(received).toEqual([[{ id: 'a', role: 'user', text: 'hola' }]]);
+
+      stop();
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns a no-op and listens to nothing without a space or a user', () => {
+      vi.mocked(onSnapshot).mockClear();
+      const a = firebase.subscribeToAssistantThread('', 'kid-uid', () => {});
+      const b = firebase.subscribeToAssistantThread(
+        'espacio_familia',
+        '',
+        () => {}
+      );
+      expect(onSnapshot).not.toHaveBeenCalled();
+      expect(() => {
+        a();
+        b();
+      }).not.toThrow();
+    });
+
+    it('reports listener errors to the caller and warns', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      let fail: (e: unknown) => void = () => {};
+      vi.mocked(onSnapshot).mockImplementation(((
+        _q: unknown,
+        _n: unknown,
+        onErr: (e: unknown) => void
+      ) => {
+        fail = onErr;
+        return () => {};
+      }) as unknown as typeof onSnapshot);
+      const onError = vi.fn();
+      firebase.subscribeToAssistantThread(
+        'espacio_familia',
+        'kid-uid',
+        () => {},
+        onError
+      );
+      const err = { code: 'permission-denied' };
+      fail(err);
+      expect(onError).toHaveBeenCalledWith(err);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     });
   });
 });

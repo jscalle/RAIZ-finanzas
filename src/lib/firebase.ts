@@ -26,6 +26,8 @@ import {
   deleteDoc,
   updateDoc,
   query,
+  orderBy,
+  limitToLast,
   where,
   getDocs,
   getDocsFromServer,
@@ -35,6 +37,8 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { resolveAuthDomain } from './authDomain';
+import { describeAssistantError } from './assistantErrors';
+import type { ThreadMessage } from '../types';
 
 // Dynamic Firebase Configuration prioritizing env variables or default project config
 const metaEnv =
@@ -1117,4 +1121,92 @@ export const fetchSpaceMemberProfiles = async (
   }
 
   return profiles;
+};
+
+// ---------------------------------------------------------------------------
+// In-app assistant
+// ---------------------------------------------------------------------------
+
+/** Most recent messages kept in memory for the assistant tab. */
+const ASSISTANT_THREAD_LIMIT = 200;
+
+// Live view of the signed-in user's own assistant conversation in a space. The server
+// writes it; the rules only let this user read it. Returns the unsubscribe function.
+export const subscribeToAssistantThread = (
+  rawSpaceId: string,
+  uid: string,
+  onUpdate: (messages: ThreadMessage[]) => void,
+  onError?: (error: unknown) => void
+): (() => void) => {
+  if (!rawSpaceId || !uid) return () => {};
+  const spaceId = normalizeSpaceId(rawSpaceId);
+  const thread = query(
+    collection(db, 'spaces', spaceId, 'assistant_threads', uid, 'messages'),
+    orderBy('createdAt', 'asc'),
+    limitToLast(ASSISTANT_THREAD_LIMIT)
+  );
+  return onSnapshot(
+    thread,
+    (snapshot) => {
+      onUpdate(
+        snapshot.docs.map(
+          (docSnap) => ({ ...docSnap.data(), id: docSnap.id }) as ThreadMessage
+        )
+      );
+    },
+    (error) => {
+      console.warn('Could not listen to the assistant conversation:', error);
+      onError?.(error);
+    }
+  );
+};
+
+export type AssistantSendResult =
+  | { ok: true; messageId: string }
+  | { ok: false; message: string; code?: string };
+
+// Send one message (text and/or one attachment) to the assistant. The answer arrives
+// through the conversation listener; this only reports whether the server took it.
+// Audio analysis can be slow, so the request has a long timeout.
+export const sendAssistantMessage = async (
+  rawSpaceId: string,
+  payload: { text?: string; attachment?: { mime: string; dataBase64: string } }
+): Promise<AssistantSendResult> => {
+  let res: Response | null;
+  try {
+    res = await postWithIdToken(
+      '/api/assistant/messages',
+      { spaceId: normalizeSpaceId(rawSpaceId), ...payload },
+      { timeoutMs: 120_000 }
+    );
+  } catch {
+    return {
+      ok: false,
+      message:
+        'No pude conectar con el asistente. Revisa tu conexión e intenta de nuevo.',
+    };
+  }
+  if (!res) {
+    return {
+      ok: false,
+      message: 'Debes iniciar sesión para usar el asistente.',
+    };
+  }
+  const body = (await res.json().catch(() => ({}))) as {
+    messageId?: unknown;
+    error?: unknown;
+    retryAfterSeconds?: unknown;
+  };
+  if (res.ok) {
+    return {
+      ok: true,
+      messageId: typeof body.messageId === 'string' ? body.messageId : '',
+    };
+  }
+  const code = typeof body.error === 'string' ? body.error : undefined;
+  const retry =
+    typeof body.retryAfterSeconds === 'number'
+      ? body.retryAfterSeconds
+      : undefined;
+  return { ok: false, message: describeAssistantError(code, retry), code };
 };

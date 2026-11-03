@@ -129,3 +129,32 @@ export interface PendingTransaction {
   rawText?: string;
   paymentMethod?: string;
 }
+
+// One message of the in-app assistant conversation, written by the server at
+// spaces/{spaceId}/assistant_threads/{uid}/messages/{id} and only read by the client.
+export interface ThreadMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  /** text: an answer or the user's words; draft: a pending movement to confirm;
+   *  notice: something the user should know; error: the message could not be processed. */
+  kind: 'text' | 'draft' | 'notice' | 'error';
+  text: string;
+  createdAt: string;
+  /** User messages only. */
+  status?: 'analyzing' | 'done' | 'failed';
+  usedFallback?: boolean;
+  attachment?: { kind: 'image' | 'audio'; mimeType: string; sizeBytes: number };
+  /** Assistant messages: the user message they answer. */
+  replyTo?: string;
+  /** Draft messages: the pending_transactions document and a snapshot to render it. */
+  draftId?: string;
+  draft?: {
+    type: string;
+    amount: number;
+    currency: string;
+    description: string;
+    category: string;
+    paymentMethod: string;
+    date: string;
+  };
+}

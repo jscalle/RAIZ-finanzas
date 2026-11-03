@@ -71,6 +71,8 @@ vi.mock('./lib/firebase', () => ({
   }),
   resolveDefaultSpaceId: async () => 'espacio_u_u',
   isPermissionDenied: () => false,
+  subscribeToAssistantThread: () => () => {},
+  sendAssistantMessage: async () => ({ ok: true, messageId: 'm' }),
   cancelAccessRequest: async () => {},
   subscribeToPendingAccessRequests: () => () => {},
   subscribeToAccessRequestStatus: () => () => {},
@@ -229,6 +231,38 @@ describe('App integration', () => {
     expect(
       await screen.findByText('Configuración de Tópicos')
     ).toBeInTheDocument();
+  });
+
+  it('opens the Asistente tab, which asks for the cloud while signed out', async () => {
+    render(<App />);
+    // Present in the desktop sidebar and in the mobile bottom nav.
+    const buttons = screen.getAllByRole('button', { name: /Asistente/i });
+    expect(buttons.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(buttons[0]);
+    expect(
+      await screen.findByText(/Para usar el Asistente necesitas la nube/i)
+    ).toBeInTheDocument();
+    // The month navigator does not apply to the chat.
+    expect(screen.queryByText('Ver Todo')).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Ir a Nube y Compartir' })
+    );
+    expect(
+      await screen.findByText('Nube y Finanzas Compartidas')
+    ).toBeInTheDocument();
+  });
+
+  it('keeps Ingresos reachable from the mobile "Más" sheet', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: /^Más$/i }));
+    // Sidebar entry plus the one in the open sheet.
+    const entries = await screen.findAllByRole('button', {
+      name: /Ingresos y Cajero/i,
+    });
+    expect(entries.length).toBe(2);
+    fireEvent.click(entries[1]);
+    expect(await screen.findByText('Gestión de Ingresos')).toBeInTheDocument();
   });
 
   it('computes and displays dashboard totals from seeded local data', () => {
