@@ -4,6 +4,7 @@ import { sendAssistantMessage } from '../lib/firebase';
 import { fileToBase64, validateAttachmentFile } from '../lib/attachments';
 import type { PickedAttachment } from '../lib/attachments';
 import { useAssistantThread } from '../hooks/useAssistantThread';
+import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import type { PendingTransaction } from '../types';
 import { ChatMessage } from './assistant/ChatMessage';
 import { DraftCard } from './assistant/DraftCard';
@@ -114,9 +115,10 @@ export default function AssistantTab({
   );
 
   const send = useCallback(
-    async (raw: string) => {
+    async (raw: string, override?: PickedAttachment) => {
       const message = raw.trim();
-      if ((!message && !attachment) || sending) return;
+      const toSend = override ?? attachment;
+      if ((!message && !toSend) || sending) return;
       setSending(true);
       setSendError(null);
       setAttachError(null);
@@ -124,11 +126,11 @@ export default function AssistantTab({
       setText('');
 
       let encoded: { mime: string; dataBase64: string } | undefined;
-      if (attachment) {
+      if (toSend) {
         try {
           encoded = {
-            mime: attachment.mime,
-            dataBase64: await fileToBase64(attachment.file),
+            mime: toSend.mime,
+            dataBase64: await fileToBase64(toSend.file),
           };
         } catch {
           setSending(false);
@@ -152,6 +154,26 @@ export default function AssistantTab({
     },
     [attachment, clearAttachment, currentSpaceId, messages.length, sending]
   );
+
+  // A finished voice note goes out right away, shown like any other attached audio.
+  const voice = useVoiceRecorder({
+    onFinished: (file) => {
+      const check = validateAttachmentFile(file);
+      if (!check.ok) {
+        setAttachError(check.message);
+        return;
+      }
+      clearAttachment();
+      const picked: PickedAttachment = {
+        file,
+        kind: 'audio',
+        mime: check.mime,
+      };
+      setAttachment(picked);
+      void send('', picked);
+    },
+    onError: setSendError,
+  });
 
   // While the upload is in flight and the thread does not show the message yet.
   const uploading =
@@ -290,6 +312,17 @@ export default function AssistantTab({
         uploading={uploading}
         onOpenAttach={() => setSheetOpen(true)}
         onRemoveAttachment={clearAttachment}
+        voiceSupported={voice.supported}
+        recording={voice.state === 'recording'}
+        recordingSeconds={voice.seconds}
+        recordingLevel={voice.level}
+        onStartRecording={() => {
+          setSendError(null);
+          setAttachError(null);
+          void voice.start();
+        }}
+        onStopRecording={voice.stop}
+        onCancelRecording={voice.cancel}
       />
       <AttachSheet
         open={sheetOpen}

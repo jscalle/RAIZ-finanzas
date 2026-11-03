@@ -11,6 +11,19 @@ import type { PendingTransaction, ThreadMessage } from '../types';
 const h = vi.hoisted(() => ({
   send: vi.fn(),
   subscribe: vi.fn(),
+  voiceOpts: null as null | {
+    onFinished: (f: File) => void;
+    onError: (m: string) => void;
+  },
+  voice: {
+    state: 'idle' as 'idle' | 'recording',
+    seconds: 0,
+    level: 0,
+    supported: false,
+    start: vi.fn(),
+    stop: vi.fn(),
+    cancel: vi.fn(),
+  },
 }));
 
 vi.mock('../lib/firebase', () => ({
@@ -18,6 +31,16 @@ vi.mock('../lib/firebase', () => ({
   subscribeToAssistantThread: (...a: unknown[]) => h.subscribe(...a),
   isPermissionDenied: (e: unknown) =>
     (e as { code?: string } | null)?.code === 'permission-denied',
+}));
+
+vi.mock('../hooks/useVoiceRecorder', () => ({
+  useVoiceRecorder: (opts: {
+    onFinished: (f: File) => void;
+    onError: (m: string) => void;
+  }) => {
+    h.voiceOpts = opts;
+    return h.voice;
+  },
 }));
 
 import AssistantTab from './AssistantTab';
@@ -81,6 +104,15 @@ const draftMessage = t('a9', {
 });
 
 beforeEach(() => {
+  h.voice = {
+    state: 'idle',
+    seconds: 0,
+    level: 0,
+    supported: false,
+    start: vi.fn(),
+    stop: vi.fn(),
+    cancel: vi.fn(),
+  };
   h.subscribe.mockImplementation(
     (_s: string, _u: string, onUpdate: Emit, onError: Fail) => {
       emit = onUpdate;
@@ -391,6 +423,108 @@ describe('AssistantTab', () => {
       );
       expect(screen.queryByText('factura.jpg')).toBeNull();
       expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
+    });
+  });
+
+  describe('voice notes', () => {
+    const note = () =>
+      new File([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], 'nota-de-voz.webm', {
+        type: 'audio/webm;codecs=opus',
+      });
+
+    it('offers the microphone when there is nothing to send, and the send button once there is text', () => {
+      h.voice.supported = true;
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Grabar nota de voz' })
+      );
+      expect(h.voice.start).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('button', { name: 'Enviar' })).toBeNull();
+
+      fireEvent.change(screen.getByLabelText('Escribe tu mensaje'), {
+        target: { value: 'hola' },
+      });
+      expect(
+        screen.queryByRole('button', { name: 'Grabar nota de voz' })
+      ).toBeNull();
+      expect(
+        screen.getByRole('button', { name: 'Enviar' })
+      ).toBeInTheDocument();
+    });
+
+    it('does not show the microphone when the device cannot record', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      expect(
+        screen.queryByRole('button', { name: 'Grabar nota de voz' })
+      ).toBeNull();
+    });
+
+    it('shows the clock while recording, with trash to cancel and send to finish', () => {
+      h.voice.supported = true;
+      h.voice.state = 'recording';
+      h.voice.seconds = 75;
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      expect(
+        screen.getByRole('group', { name: 'Grabando nota de voz' })
+      ).toBeInTheDocument();
+      expect(screen.getByText('1:15')).toBeInTheDocument();
+      expect(screen.getByText('Máximo 3 minutos')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Escribe tu mensaje')).toBeNull();
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Cancelar grabación' })
+      );
+      expect(h.voice.cancel).toHaveBeenCalledTimes(1);
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Enviar nota de voz' })
+      );
+      expect(h.voice.stop).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a finished voice note right away as audio with no text', async () => {
+      let resolve: (v: unknown) => void = () => {};
+      h.send.mockReturnValue(new Promise((r) => (resolve = r)));
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      act(() => h.voiceOpts!.onFinished(note()));
+      await waitFor(() =>
+        expect(h.send).toHaveBeenCalledWith('espacio_familia', {
+          attachment: { mime: 'audio/webm', dataBase64: 'GkXfow==' },
+        })
+      );
+      expect(screen.getByText('nota-de-voz.webm')).toBeInTheDocument();
+      expect(screen.getByText(/Subiendo…/)).toBeInTheDocument();
+      resolve({ ok: true, messageId: 'm' });
+      await waitFor(() =>
+        expect(screen.queryByText('nota-de-voz.webm')).toBeNull()
+      );
+    });
+
+    it('keeps the note ready to resend if sending fails', async () => {
+      h.send.mockResolvedValue({
+        ok: false,
+        message:
+          'No pude conectar con el asistente. Revisa tu conexión e intenta de nuevo.',
+      });
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      act(() => h.voiceOpts!.onFinished(note()));
+      expect(await screen.findByText(/No pude conectar/)).toBeInTheDocument();
+      expect(screen.getByText('nota-de-voz.webm')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Enviar' })).not.toBeDisabled();
+    });
+
+    it('shows the recorder errors, such as a denied microphone', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      act(() =>
+        h.voiceOpts!.onError('Para grabar necesito permiso del micrófono.')
+      );
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'permiso del micrófono'
+      );
     });
   });
 

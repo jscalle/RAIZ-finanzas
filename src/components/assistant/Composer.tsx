@@ -1,4 +1,4 @@
-import { Loader2, Mic, Plus, Send, X } from 'lucide-react';
+import { Loader2, Mic, Plus, Send, Trash2, X } from 'lucide-react';
 import { formatFileSize } from '../../lib/attachments';
 import type { PickedAttachment } from '../../lib/attachments';
 
@@ -14,6 +14,83 @@ interface Props {
   uploading: boolean;
   onOpenAttach: () => void;
   onRemoveAttachment: () => void;
+  /** Voice notes: tap the mic to start, tap send to finish, trash to cancel. */
+  voiceSupported: boolean;
+  recording: boolean;
+  recordingSeconds: number;
+  /** Microphone level from 0 to 1, for the little bars. */
+  recordingLevel: number;
+  onStartRecording: () => void;
+  onStopRecording: () => void;
+  onCancelRecording: () => void;
+}
+
+export const formatClock = (seconds: number) =>
+  `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+const BAR_WEIGHTS = [0.5, 0.8, 1, 0.8, 0.5];
+
+function RecordingBar({
+  seconds,
+  level,
+  onCancel,
+  onSend,
+}: {
+  seconds: number;
+  level: number;
+  onCancel: () => void;
+  onSend: () => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-3"
+      role="group"
+      aria-label="Grabando nota de voz"
+    >
+      <p role="status" className="sr-only">
+        Grabando
+      </p>
+      <button
+        type="button"
+        onClick={onCancel}
+        aria-label="Cancelar grabación"
+        className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full border border-border bg-card text-foreground"
+      >
+        <Trash2 className="h-6 w-6" aria-hidden="true" />
+      </button>
+      <div className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2">
+        <span
+          className="h-3 w-3 shrink-0 rounded-full bg-red-500 motion-safe:animate-pulse"
+          aria-hidden="true"
+        />
+        <span className="text-lg font-semibold tabular-nums text-foreground">
+          {formatClock(seconds)}
+        </span>
+        <span className="flex h-6 items-center gap-1" aria-hidden="true">
+          {BAR_WEIGHTS.map((weight, i) => (
+            <span
+              key={i}
+              className="w-1 rounded-full bg-primary"
+              style={{
+                height: `${Math.max(4, Math.round(24 * Math.min(1, level * weight + 0.1)))}px`,
+              }}
+            />
+          ))}
+        </span>
+        <span className="truncate text-sm text-muted-foreground">
+          Máximo 3 minutos
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onSend}
+        aria-label="Enviar nota de voz"
+        className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"
+      >
+        <Send className="h-6 w-6" aria-hidden="true" />
+      </button>
+    </div>
+  );
 }
 
 /** Text box, attach button and send button. Font stays at 16px so iOS does not zoom on focus. */
@@ -26,8 +103,29 @@ export function Composer({
   uploading,
   onOpenAttach,
   onRemoveAttachment,
+  voiceSupported,
+  recording,
+  recordingSeconds,
+  recordingLevel,
+  onStartRecording,
+  onStopRecording,
+  onCancelRecording,
 }: Props) {
-  const canSend = (value.trim().length > 0 || attachment !== null) && !sending;
+  const hasContent = value.trim().length > 0 || attachment !== null;
+  const canSend = hasContent && !sending;
+
+  if (recording) {
+    return (
+      <div className="border-t border-border bg-background">
+        <RecordingBar
+          seconds={recordingSeconds}
+          level={recordingLevel}
+          onCancel={onCancelRecording}
+          onSend={onStopRecording}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="border-t border-border bg-background">
@@ -98,21 +196,32 @@ export function Composer({
           }}
           className="max-h-32 min-h-[52px] flex-1 resize-none rounded-2xl border border-border bg-card px-4 py-3 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
         />
-        <button
-          type="submit"
-          disabled={!canSend}
-          aria-label="Enviar"
-          className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-        >
-          {sending ? (
-            <Loader2
-              className="h-6 w-6 animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-          ) : (
-            <Send className="h-6 w-6" aria-hidden="true" />
-          )}
-        </button>
+        {!hasContent && voiceSupported && !sending ? (
+          <button
+            type="button"
+            onClick={onStartRecording}
+            aria-label="Grabar nota de voz"
+            className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"
+          >
+            <Mic className="h-6 w-6" aria-hidden="true" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!canSend}
+            aria-label="Enviar"
+            className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+          >
+            {sending ? (
+              <Loader2
+                className="h-6 w-6 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Send className="h-6 w-6" aria-hidden="true" />
+            )}
+          </button>
+        )}
       </form>
     </div>
   );
