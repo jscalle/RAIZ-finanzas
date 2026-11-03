@@ -209,7 +209,7 @@ export default function AssistantTab({
   return (
     <section
       aria-label="Asistente"
-      className="mx-auto flex h-[calc(100dvh-14rem)] min-h-[420px] max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-background md:h-[calc(100dvh-9rem)]"
+      className="mx-auto flex h-[calc(100dvh-11rem)] min-h-[420px] max-w-3xl flex-col overflow-hidden rounded-3xl border border-border bg-background md:h-[calc(100dvh-9rem)]"
     >
       {loadError && (
         <p

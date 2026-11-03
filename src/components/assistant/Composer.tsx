@@ -1,4 +1,13 @@
-import { Loader2, Mic, Plus, Send, Trash2, X } from 'lucide-react';
+import { useLayoutEffect, useRef } from 'react';
+import {
+  Image as ImageIcon,
+  Loader2,
+  Mic,
+  Plus,
+  Send,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { formatFileSize } from '../../lib/attachments';
 import type { PickedAttachment } from '../../lib/attachments';
 
@@ -111,6 +120,15 @@ export function Composer({
   onStopRecording,
   onCancelRecording,
 }: Props) {
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  // Grow with the text (up to the max height) so a second line is never hidden.
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    box.style.height = 'auto';
+    box.style.height = `${Math.min(box.scrollHeight, 128)}px`;
+  }, [value]);
+
   const hasContent = value.trim().length > 0 || attachment !== null;
   const canSend = hasContent && !sending;
 
@@ -139,7 +157,11 @@ export function Composer({
             />
           ) : (
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <Mic className="h-6 w-6" aria-hidden="true" />
+              {attachment.kind === 'image' ? (
+                <ImageIcon className="h-6 w-6" aria-hidden="true" />
+              ) : (
+                <Mic className="h-6 w-6" aria-hidden="true" />
+              )}
             </span>
           )}
           <div className="min-w-0 flex-1">
@@ -183,10 +205,11 @@ export function Composer({
         </label>
         <textarea
           id="assistant-message"
+          ref={boxRef}
           value={value}
           rows={1}
           maxLength={MAX_MESSAGE_LENGTH}
-          placeholder="Escribe aquí… por ejemplo: gasté 45.000 en el almuerzo"
+          placeholder="Escribe aquí…"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {

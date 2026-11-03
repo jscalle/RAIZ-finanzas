@@ -414,6 +414,15 @@ describe('AssistantTab', () => {
       );
     });
 
+    it('shows a preview of the chosen photo', () => {
+      render(<AssistantTab {...props} />);
+      act(() => emit([t('u0', { status: 'done' })]));
+      openAndPick(jpeg());
+      expect(
+        screen.getByAltText('Vista previa de la foto')
+      ).toBeInTheDocument();
+    });
+
     it('lets the user remove the attachment before sending', () => {
       render(<AssistantTab {...props} />);
       act(() => emit([t('u0', { status: 'done' })]));

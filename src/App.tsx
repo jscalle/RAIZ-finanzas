@@ -2509,7 +2509,11 @@ export default function App() {
       </AnimatePresence>
 
       {/* MAIN CONTAINER */}
-      <main className="flex-1 overflow-y-auto outline-none pb-36 md:pb-10">
+      <main
+        className={`flex-1 overflow-y-auto outline-none md:pb-10 ${
+          activeTab === 'assistant' ? 'pb-24' : 'pb-36'
+        }`}
+      >
         <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-10">
           {activeTab !== 'assistant' && (
             <PendingTransactionsBanner
