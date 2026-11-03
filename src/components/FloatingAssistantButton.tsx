@@ -17,7 +17,8 @@ const STORAGE_KEY = 'raiz.assistantBubble';
 const DRAG_THRESHOLD = 6;
 
 interface Props {
-  onOpen: () => void;
+  /** Called with the bubble's center so the assistant can grow out of it. */
+  onOpen: (origin: { x: number; y: number }) => void;
   /** Drafts waiting for a decision. */
   badgeCount?: number;
   /** The assistant answered while the panel was closed. */
@@ -164,12 +165,13 @@ export function FloatingAssistantButton({
       <button
         type="button"
         aria-label={label}
-        onClick={() => {
+        onClick={(e) => {
           if (ignoreNextClick.current) {
             ignoreNextClick.current = false;
             return;
           }
-          onOpen();
+          const box = e.currentTarget.getBoundingClientRect();
+          onOpen({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

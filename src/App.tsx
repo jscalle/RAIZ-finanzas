@@ -38,6 +38,7 @@ const TopicsConfig = lazy(() => import('./components/TopicsConfig'));
 const AssistantTab = lazy(() => import('./components/AssistantTab'));
 import EditPendingTransactionModal from './components/EditPendingTransactionModal';
 import { FloatingAssistantButton } from './components/FloatingAssistantButton';
+import { AssistantSheet } from './components/AssistantSheet';
 
 export const getColombiaDateISO = (): string => {
   try {
@@ -223,7 +224,6 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<
     | 'dashboard'
-    | 'assistant'
     | 'incomes'
     | 'expenses'
     | 'savings'
@@ -231,6 +231,19 @@ export default function App() {
     | 'sync_settings'
   >('dashboard');
   const [isMoreSheetOpen, setIsMoreSheetOpen] = useState(false);
+
+  // The assistant is not a section: it floats over whatever screen is open.
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantMounted, setAssistantMounted] = useState(false);
+  const [assistantOrigin, setAssistantOrigin] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const openAssistant = useCallback((origin?: { x: number; y: number }) => {
+    setAssistantOrigin(origin ?? null);
+    setAssistantMounted(true);
+    setAssistantOpen(true);
+  }, []);
 
   // Custom Toast Notification State
   const [toast, setToast] = useState<{
@@ -2130,9 +2143,7 @@ export default function App() {
         <div
           role="alert"
           className={`fixed left-1/2 ${
-            activeTab === 'assistant'
-              ? 'top-20 md:top-6'
-              : 'bottom-24 md:bottom-6'
+            assistantOpen ? 'top-20 md:top-6' : 'bottom-24 md:bottom-6'
           } z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl backdrop-blur-md ${
             toast.type === 'error'
               ? 'border-rose-500/40 bg-rose-950/90 text-rose-100'
@@ -2269,12 +2280,19 @@ export default function App() {
               </p>
               {section.items.map((tab) => {
                 const Icon = tab.icon;
-                const isSelected = activeTab === tab.id;
+                const isAssistant = tab.id === 'assistant';
+                const isSelected = isAssistant
+                  ? assistantOpen
+                  : activeTab === tab.id;
                 return (
                   <button
                     key={tab.id}
                     aria-current={isSelected ? 'page' : undefined}
-                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                    onClick={() =>
+                      isAssistant
+                        ? openAssistant()
+                        : setActiveTab(tab.id as typeof activeTab)
+                    }
                     className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-all ${
                       isSelected
                         ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
@@ -2339,11 +2357,7 @@ export default function App() {
       </aside>
 
       {/* MOBILE HEADER */}
-      <div
-        className={`md:hidden sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3 ${
-          activeTab === 'assistant' ? 'hidden' : ''
-        }`}
-      >
+      <div className="md:hidden sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <img
@@ -2368,8 +2382,8 @@ export default function App() {
         {(
           [
             { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'incomes', label: 'Ingresos', icon: TrendingUp },
             { id: 'expenses', label: 'Gastos', icon: TrendingDown },
-            { id: 'assistant', label: 'Asistente', icon: Sprout },
             { id: 'savings', label: 'Metas', icon: Target },
           ] as const
         ).map((tab) => {
@@ -2393,14 +2407,6 @@ export default function App() {
                 }`}
               >
                 <Icon className="h-5 w-5 shrink-0" />
-                {tab.id === 'assistant' && pendingTransactions.length > 0 && (
-                  <span
-                    className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-card bg-rose-500 px-1 text-[10px] font-bold text-white"
-                    aria-label={`${pendingTransactions.length} por confirmar`}
-                  >
-                    {pendingTransactions.length}
-                  </span>
-                )}
               </span>
               <span className="text-[11px] font-medium leading-none">
                 {tab.label}
@@ -2410,16 +2416,13 @@ export default function App() {
         })}
         <button
           aria-current={
-            activeTab === 'incomes' ||
-            activeTab === 'topics' ||
-            activeTab === 'sync_settings'
+            activeTab === 'topics' || activeTab === 'sync_settings'
               ? 'page'
               : undefined
           }
           onClick={() => setIsMoreSheetOpen(!isMoreSheetOpen)}
           className={`flex flex-col items-center justify-center w-full py-1 space-y-1 transition-colors ${
             isMoreSheetOpen ||
-            activeTab === 'incomes' ||
             activeTab === 'topics' ||
             activeTab === 'sync_settings'
               ? 'text-primary font-bold'
@@ -2428,9 +2431,7 @@ export default function App() {
         >
           <span
             className={`flex h-8 w-14 items-center justify-center rounded-full transition-colors ${
-              activeTab === 'incomes' ||
-              activeTab === 'topics' ||
-              activeTab === 'sync_settings'
+              activeTab === 'topics' || activeTab === 'sync_settings'
                 ? 'bg-primary text-primary-foreground'
                 : ''
             }`}
@@ -2441,14 +2442,43 @@ export default function App() {
         </button>
       </div>
 
-      {/* Floating assistant bubble: draggable, over every screen except the assistant itself */}
+      {/* Floating assistant bubble: draggable, over every screen while the assistant is closed */}
       <FloatingAssistantButton
-        onOpen={() => setActiveTab('assistant')}
+        onOpen={openAssistant}
         badgeCount={pendingTransactions.length}
-        hidden={
-          activeTab === 'assistant' || isMoreSheetOpen || !!editingPendingTx
-        }
+        hidden={assistantOpen || isMoreSheetOpen || !!editingPendingTx}
       />
+
+      {/* Assistant: a sheet on phones, a right-hand panel on large screens */}
+      <AssistantSheet
+        open={assistantOpen}
+        mounted={assistantMounted}
+        origin={assistantOrigin}
+        onClose={() => setAssistantOpen(false)}
+      >
+        <Suspense
+          fallback={
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              Cargando asistente...
+            </div>
+          }
+        >
+          <AssistantTab
+            currentSpaceId={currentSpaceId}
+            userUid={user?.uid}
+            syncEnabled={syncEnabled}
+            onOpenCloudSettings={() => {
+              setAssistantOpen(false);
+              setActiveTab('sync_settings');
+            }}
+            pendingTransactions={pendingTransactions}
+            pendingReady={pendingLoadedSpace === currentSpaceId}
+            onApproveDraft={handleApprovePendingTransaction}
+            onEditDraft={(tx) => setEditingPendingTx(tx)}
+            onDiscardDraft={handleDiscardPendingTransaction}
+          />
+        </Suspense>
+      </AssistantSheet>
 
       {/* MORE SHEET MODAL */}
       <AnimatePresence>
@@ -2475,20 +2505,20 @@ export default function App() {
                 </p>
                 <button
                   onClick={() => {
-                    setActiveTab('incomes');
+                    openAssistant();
                     setIsMoreSheetOpen(false);
                   }}
                   className="flex items-center gap-4 rounded-2xl p-4 transition-colors hover:bg-muted"
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                    <TrendingUp className="h-6 w-6" />
+                    <Sprout className="h-6 w-6" />
                   </div>
                   <div className="text-left">
                     <div className="font-semibold text-foreground">
-                      Ingresos y Cajero
+                      Asistente
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      Entradas y efectivo
+                      Háblale o mándale una foto
                     </div>
                   </div>
                 </button>
@@ -2562,25 +2592,15 @@ export default function App() {
       </AnimatePresence>
 
       {/* MAIN CONTAINER */}
-      <main
-        className={`flex-1 overflow-y-auto outline-none md:pb-10 ${
-          activeTab === 'assistant' ? 'pb-0' : 'pb-36'
-        }`}
-      >
-        <div
-          className={`max-w-5xl mx-auto md:px-8 md:py-10 ${
-            activeTab === 'assistant' ? 'px-0 py-0' : 'px-4 py-6'
-          }`}
-        >
-          {activeTab !== 'assistant' && (
-            <PendingTransactionsBanner
-              pendingTransactions={pendingTransactions}
-              onApprove={handleApprovePendingTransaction}
-              onApproveAll={handleApproveAllPendingTransactions}
-              onDiscard={handleDiscardPendingTransaction}
-              onEdit={(tx) => setEditingPendingTx(tx)}
-            />
-          )}
+      <main className="flex-1 overflow-y-auto pb-36 outline-none md:pb-10">
+        <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-10">
+          <PendingTransactionsBanner
+            pendingTransactions={pendingTransactions}
+            onApprove={handleApprovePendingTransaction}
+            onApproveAll={handleApproveAllPendingTransactions}
+            onDiscard={handleDiscardPendingTransaction}
+            onEdit={(tx) => setEditingPendingTx(tx)}
+          />
 
           <EditPendingTransactionModal
             pendingTx={editingPendingTx}
@@ -2590,58 +2610,56 @@ export default function App() {
             onSave={handleSaveEditedPendingTransaction}
           />
 
-          {/* MONTH NAVIGATOR (not used by the assistant chat) */}
-          {activeTab !== 'assistant' && (
-            <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="inline-flex items-center bg-card border border-border rounded-full p-1 shadow-sm">
-                <button
-                  onClick={() => {
-                    if (activeMonth !== 'all')
-                      setActiveMonth(decrementMonth(activeMonth));
-                  }}
-                  disabled={activeMonth === 'all'}
-                  className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <span className="w-32 md:w-40 text-center text-sm font-semibold text-foreground capitalize">
-                  {getMonthLabel(activeMonth)}
-                </span>
-                <button
-                  onClick={() => {
-                    if (activeMonth !== 'all')
-                      setActiveMonth(incrementMonth(activeMonth));
-                  }}
-                  disabled={activeMonth === 'all'}
-                  className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() =>
-                    setActiveMonth(activeMonth === 'all' ? '2026-08' : 'all')
-                  }
-                  className={`px-4 py-2 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
-                    activeMonth === 'all'
-                      ? 'bg-primary/10 text-primary border-primary/20'
-                      : 'bg-card text-muted-foreground border-border hover:bg-muted'
-                  }`}
-                >
-                  {activeMonth === 'all' ? 'Volver al Mes' : 'Ver Todo'}
-                </button>
-                <button
-                  onClick={handleRefreshAllData}
-                  className="hidden md:flex p-2 text-muted-foreground hover:bg-muted hover:text-foreground rounded-full transition-colors border border-transparent hover:border-border cursor-pointer"
-                  title="Refrescar datos"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </button>
-              </div>
+          {/* MONTH NAVIGATOR */}
+          <div className="mb-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="inline-flex items-center bg-card border border-border rounded-full p-1 shadow-sm">
+              <button
+                onClick={() => {
+                  if (activeMonth !== 'all')
+                    setActiveMonth(decrementMonth(activeMonth));
+                }}
+                disabled={activeMonth === 'all'}
+                className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="w-32 md:w-40 text-center text-sm font-semibold text-foreground capitalize">
+                {getMonthLabel(activeMonth)}
+              </span>
+              <button
+                onClick={() => {
+                  if (activeMonth !== 'all')
+                    setActiveMonth(incrementMonth(activeMonth));
+                }}
+                disabled={activeMonth === 'all'}
+                className="p-1.5 hover:bg-muted rounded-full disabled:opacity-50 transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
-          )}
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() =>
+                  setActiveMonth(activeMonth === 'all' ? '2026-08' : 'all')
+                }
+                className={`px-4 py-2 text-xs font-semibold rounded-full border transition-all cursor-pointer ${
+                  activeMonth === 'all'
+                    ? 'bg-primary/10 text-primary border-primary/20'
+                    : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                }`}
+              >
+                {activeMonth === 'all' ? 'Volver al Mes' : 'Ver Todo'}
+              </button>
+              <button
+                onClick={handleRefreshAllData}
+                className="hidden md:flex p-2 text-muted-foreground hover:bg-muted hover:text-foreground rounded-full transition-colors border border-transparent hover:border-border cursor-pointer"
+                title="Refrescar datos"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
 
           <AnimatePresence mode="wait">
             <motion.div
@@ -2683,19 +2701,6 @@ export default function App() {
                   </div>
                 }
               >
-                {activeTab === 'assistant' && (
-                  <AssistantTab
-                    currentSpaceId={currentSpaceId}
-                    userUid={user?.uid}
-                    syncEnabled={syncEnabled}
-                    onOpenCloudSettings={() => setActiveTab('sync_settings')}
-                    pendingTransactions={pendingTransactions}
-                    pendingReady={pendingLoadedSpace === currentSpaceId}
-                    onApproveDraft={handleApprovePendingTransaction}
-                    onEditDraft={(tx) => setEditingPendingTx(tx)}
-                    onDiscardDraft={handleDiscardPendingTransaction}
-                  />
-                )}
                 {activeTab === 'incomes' && (
                   <IncomesSection
                     incomes={filteredIncomes}

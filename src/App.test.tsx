@@ -267,7 +267,7 @@ describe('App integration', () => {
     expect(dashboard().querySelector('span.bg-primary')).toBeNull();
   });
 
-  it('floats the assistant bubble over every screen, opens the assistant from it and hides there', async () => {
+  it('floats the assistant bubble over every screen, opens the assistant from it and brings it back on close', async () => {
     render(<App />);
     const bubble = () =>
       screen.queryByRole('button', { name: /Abrir el asistente/ });
@@ -282,19 +282,26 @@ describe('App integration', () => {
       await screen.findByText(/Para usar el Asistente necesitas la nube/i)
     ).toBeInTheDocument();
     expect(bubble()).toBeNull();
+    // The section underneath stays where it was.
+    expect(screen.getByText('Control de Gastos')).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Cerrar el asistente' })
+    );
+    expect(bubble()).toBeInTheDocument();
+    expect(screen.getByText('Control de Gastos')).toBeInTheDocument();
   });
 
-  it('opens the Asistente tab, which asks for the cloud while signed out', async () => {
+  it('opens the assistant from the side menu without leaving the current section, and asks for the cloud while signed out', async () => {
     render(<App />);
-    // Present in the desktop sidebar and in the mobile bottom nav.
-    const buttons = screen.getAllByRole('button', { name: /Asistente/i });
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
-    fireEvent.click(buttons[0]);
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Asistente\s*Háblale/i })
+    );
     expect(
       await screen.findByText(/Para usar el Asistente necesitas la nube/i)
     ).toBeInTheDocument();
-    // The month navigator does not apply to the chat.
-    expect(screen.queryByText('Ver Todo')).toBeNull();
+    // The assistant is not a section: the month navigator is still there.
+    expect(screen.getByText('Ver Todo')).toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Ir a Nube y Compartir' })
@@ -302,18 +309,29 @@ describe('App integration', () => {
     expect(
       await screen.findByText('Nube y Finanzas Compartidas')
     ).toBeInTheDocument();
+    // Closed, not unmounted: the conversation survives until the next open.
+    expect(document.querySelector('[data-state="closed"]')).not.toBeNull();
   });
 
-  it('keeps Ingresos reachable from the mobile "Más" sheet', async () => {
+  it('puts Ingresos in the mobile bottom bar and offers the Asistente from "Más"', async () => {
     render(<App />);
+    const bottomIncomes = screen
+      .getAllByRole('button', { name: /Ingresos/i })
+      .find((b) => b.textContent?.trim() === 'Ingresos')!;
+    fireEvent.click(bottomIncomes);
+    expect(await screen.findByText('Gestión de Ingresos')).toBeInTheDocument();
+    expect(bottomIncomes).toHaveAttribute('aria-current', 'page');
+
     fireEvent.click(screen.getByRole('button', { name: /^Más$/i }));
-    // Sidebar entry plus the one in the open sheet.
     const entries = await screen.findAllByRole('button', {
-      name: /Ingresos y Cajero/i,
+      name: /^Asistente\s*Háblale/i,
     });
+    // Sidebar entry plus the one in the open sheet.
     expect(entries.length).toBe(2);
     fireEvent.click(entries[1]);
-    expect(await screen.findByText('Gestión de Ingresos')).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Para usar el Asistente necesitas la nube/i)
+    ).toBeInTheDocument();
   });
 
   it('keeps each section description behind an (i) button until someone taps it', async () => {

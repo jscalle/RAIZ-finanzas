@@ -62,6 +62,11 @@ describe('FloatingAssistantButton', () => {
     render(<FloatingAssistantButton onOpen={onOpen} />);
     fireEvent.click(open());
     expect(onOpen).toHaveBeenCalledTimes(1);
+    // It reports where the bubble is, so the assistant can grow out of it.
+    expect(onOpen).toHaveBeenCalledWith({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    });
   });
 
   it('shows how many drafts wait, caps it at 9+, and says a reply arrived', () => {
