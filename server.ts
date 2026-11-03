@@ -39,7 +39,13 @@ import {
   getSpaceTopics as loadSpaceTopics,
   getSpaceFullContext as loadSpaceFullContext,
 } from "./server/assistantContext";
-import { buildLocalFallbackResult } from "./server/assistantFallback";
+import {
+  ASSISTANT_MODEL,
+  assistantResponseSchema,
+  buildDrafts,
+  runAssistantModel,
+} from "./server/assistantService";
+import type { AssistantMedia } from "./server/assistantService";
 
 dotenv.config();
 
@@ -187,6 +193,15 @@ function getGeminiClient(): GoogleGenAI {
     }
   }
   return aiClient;
+}
+
+async function generateWithGemini({ contents }: { contents: any[] }): Promise<string> {
+  const response = await getGeminiClient().models.generateContent({
+    model: ASSISTANT_MODEL,
+    contents,
+    config: { responseMimeType: "application/json", responseSchema: assistantResponseSchema },
+  });
+  return response.text ?? "";
 }
 
 // Lightweight in-memory rate limiter (per client IP).
@@ -1331,112 +1346,14 @@ Actualiza únicamente los campos que el usuario pidió cambiar o aclarar (ej: mo
         parse_mode: "Markdown",
       });
 
-      const promptText = `Actúa como FinPersonAI, el asesor y analista financiero personal del usuario en Colombia.
-Tu tarea es decidir si el usuario está:
-A) Haciendo una CONSULTA / PREGUNTA / ANÁLISIS sobre sus finanzas, saldos, presupuestos, categorías o historial (intent = "QUERY").
-B) Enviando uno o varios gastos/ingresos nuevos (por texto, nota de voz/audio o imagen) para REGISTRARLOS (intent = "RECORD").
-C) Ambos al mismo tiempo (ej: pide registrar algo y además hace una pregunta).
-
-Fecha actual: ${todayISO} (Mes activo: ${fullContext?.currentMonth || todayISO.slice(0, 7)}).
-Categorías disponibles en el presupuesto: [${topicNames}].
-
-=== ESTADO FINANCIERO EN TIEMPO REAL DEL USUARIO ===
-Resumen de Saldos y Liquidez (COP):
-${JSON.stringify(fullContext?.financialSummary || {}, null, 2)}
-
-Consumo de Presupuesto por Categoría en el Mes Actual (${fullContext?.currentMonth}):
-${JSON.stringify(fullContext?.categoryBreakdown || [], null, 2)}
-
-Metas de Ahorro:
-${JSON.stringify(fullContext?.goals || [], null, 2)}
-
-Últimos movimientos registrados en la base de datos (para responder consultas o evitar duplicados):
-${JSON.stringify(recentRecords.slice(0, 80))}
-=====================================================
-
-Instrucciones clave:
-1. Si hay un archivo de audio / nota de voz adjunto, escúchalo con total atención en español colombiano.
-2. Si el usuario hace una pregunta, pide un análisis, consulta cuánto tiene disponible, cuánto ha gastado, cuánto le queda de presupuesto, qué movimientos tiene o pide consejos (intent = "QUERY"):
-   - Redacta en "chatResponse" una respuesta clara, bien estructurada con viñetas, emojis y montos formateados en pesos colombianos (ej: $1.250.000), basándote ESTRICTAMENTE en los datos reales del ESTADO FINANCIERO EN TIEMPO REAL.
-   - SIEMPRE presenta como cifra principal de disponibilidad el **Disponible Real para Gastar (Libre después de Topes y Ahorro)** = \`disponibleRealParaGastar\` junto con su explicación \`formulaDisponibleReal\`, tal como aparece en la tarjeta principal de la Web App.
-   - Muestra también la **Reserva en Topes aún por Ejecutar** (\`reservaEnTopesPorEjecutar\`), los **Excesos fuera de tope** (\`excesosFueraDeTope\`), el **Consumo Real del Mes** (\`gastosConsumoRealMesActual\` separado en Débito/Efectivo y Compras con TC), los **Pagos a Tarjetas este mes** (\`pagosTarjetasCreditoMesActual\`) y las **Compras con TC en la App sin Cruzar** (\`deudaTcPendienteTotal\`). NUNCA inventes ni restes los excesos contra la reserva de otras categorías.
-   - Deja "transactions" como un arreglo vacío [] si no pidió registrar ningún gasto/ingreso nuevo.
-3. Si el usuario envía una nota de voz, imagen de recibos/movimientos o un texto describiendo un gasto/ingreso para registrar (intent = "RECORD"):
-   - Extrae todas las transacciones nuevas en "transactions".
-   - En "explanation", incluye brevemente qué entendiste (y si fue por audio, pon: "🎙️ Audio transcrito: ...").
-   - Si pide comparar contra sus registros actuales para no duplicar, omite las que ya aparezcan en "Últimos movimientos registrados" y explícalo en "skippedSummary".
-   - Lee con máxima precisión el monto numérico (amount), asigna una categoría exacta de la lista [${topicNames}], el método ("DEBITO", "CREDITO", "EFECTIVO", "DIGITAL") y la fecha YYYY-MM-DD.
-
-Mensaje de texto adicional del usuario: "${text ? text.slice(0, 2000) : "(Nota de voz / imagen adjunta sin texto)"}"`;
-
-      const contents: any[] = [];
-      if (base64Image) {
-        contents.push({
-          inlineData: {
-            mimeType,
-            data: base64Image,
-          },
-        });
-      }
-      if (base64Audio) {
-        contents.push({
-          inlineData: {
-            mimeType: audioMimeType,
-            data: base64Audio,
-          },
-        });
-      }
-      contents.push(promptText);
-
-      let parsedRoot: any = {};
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.8-flash",
-          contents,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                intent: {
-                  type: Type.STRING,
-                  description: "QUERY si es una pregunta/consulta/análisis financiero; RECORD si es para registrar movimientos.",
-                },
-                chatResponse: {
-                  type: Type.STRING,
-                  description: "Respuesta conversacional o análisis financiero detallado en Markdown para el usuario (obligatorio cuando intent es QUERY o cuando el usuario hace una pregunta).",
-                },
-                skippedSummary: {
-                  type: Type.STRING,
-                  description: "Resumen breve si se omitieron movimientos que ya estaban registrados en la base de datos (vacío si no aplica).",
-                },
-                transactions: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      type: { type: Type.STRING },
-                      amount: { type: Type.NUMBER },
-                      currency: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      category: { type: Type.STRING },
-                      paymentMethod: { type: Type.STRING },
-                      date: { type: Type.STRING },
-                      explanation: { type: Type.STRING },
-                    },
-                    required: ["type", "amount", "description", "category", "paymentMethod", "date", "explanation"],
-                  },
-                },
-              },
-              required: ["intent", "transactions"],
-            },
-          },
-        });
-        parsedRoot = JSON.parse(response.text?.trim() || "{}");
-      } catch (aiErr: any) {
-        console.warn("[telegram] Gemini API failed, activating local analytical & parser fallback:", aiErr?.status || aiErr?.message || aiErr);
-        parsedRoot = buildLocalFallbackResult(text, fullContext, topics, todayISO, Boolean(base64Image));
-      }
+      const media: AssistantMedia[] = [];
+      if (base64Image) media.push({ mimeType, dataBase64: base64Image });
+      if (base64Audio) media.push({ mimeType: audioMimeType, dataBase64: base64Audio });
+      const { parsed: parsedRoot } = await runAssistantModel(
+        { generate: generateWithGemini },
+        { topics, fullContext, todayISO },
+        { text, media }
+      );
       const txList: any[] = Array.isArray(parsedRoot.transactions) ? parsedRoot.transactions : [];
       const skippedSummary: string = parsedRoot.skippedSummary || "";
       const chatResponse: string = parsedRoot.chatResponse || "";
@@ -1477,33 +1394,20 @@ Mensaje de texto adicional del usuario: "${text ? text.slice(0, 2000) : "(Nota d
         });
       }
 
-      for (let i = 0; i < txList.length; i++) {
-        const parsed = txList[i];
-        const isIncome = parsed.type === "INCOME";
-        const matchedTopic =
-          topics.find((t) => t.name.toLowerCase() === (parsed.category || "").toLowerCase()) ||
-          topics.find((t) => t.type === (isIncome ? "INCOME" : "EXPENSE")) ||
-          topics[0];
+      const drafts = buildDrafts({
+        transactions: txList,
+        topics,
+        spaceId: normalizedSpaceId,
+        text,
+        todayISO,
+        idPrefix: "tg_",
+        now: new Date(),
+      });
 
-        const draftId = `tg_${Date.now().toString(36)}_${i}`;
+      for (let i = 0; i < txList.length; i++) {
+        const draftId = drafts[i].id;
         const draftData: any = {
-          id: draftId,
-          spaceId: normalizedSpaceId,
-          type: isIncome ? "INCOME" : "EXPENSE",
-          amount: Number(parsed.amount) || 0,
-          currency: parsed.currency || "COP",
-          description: parsed.description || (text ? text.slice(0, 40) : "Comprobante"),
-          category: matchedTopic ? matchedTopic.name : "Gastos imprevistos",
-          topicId: matchedTopic ? matchedTopic.id : "topic_1785985166584",
-          paymentMethod: parsed.paymentMethod || (isIncome ? "DIGITAL" : "DEBITO"),
-          date: normalizeDateToISO(parsed.date || todayISO),
-          explanation:
-            txList.length > 1
-              ? `(${i + 1} de ${txList.length}) ${parsed.explanation || ""}`
-              : parsed.explanation || "",
-          status: "TELEGRAM_DRAFT",
-          source: "SMS_WEBHOOK",
-          createdAt: new Date().toISOString(),
+          ...drafts[i],
           tgChatId: chatId,
           tgPhotoFileId: photoFileId || null,
           tgMessageId: null,
