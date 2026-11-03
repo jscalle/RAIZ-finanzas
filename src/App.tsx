@@ -2112,7 +2112,11 @@ export default function App() {
       {toast && (toast.type === 'error' || toast.type === 'warning') && (
         <div
           role="alert"
-          className={`fixed left-1/2 bottom-24 md:bottom-6 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl backdrop-blur-md ${
+          className={`fixed left-1/2 ${
+            activeTab === 'assistant'
+              ? 'top-20 md:top-6'
+              : 'bottom-24 md:bottom-6'
+          } z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-xl border px-4 py-3 text-xs font-medium shadow-2xl backdrop-blur-md ${
             toast.type === 'error'
               ? 'border-rose-500/40 bg-rose-950/90 text-rose-100'
               : 'border-amber-500/40 bg-amber-950/90 text-amber-100'

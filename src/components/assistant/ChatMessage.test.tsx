@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import {
   ChatMessage,
   SLOW_ANALYSIS_MS,
@@ -41,6 +41,56 @@ describe('ChatMessage', () => {
   it('says so when the message could not be processed', () => {
     view({ status: 'failed' });
     expect(screen.getByText('No se pudo procesar')).toBeInTheDocument();
+  });
+
+  it('offers Reintentar for a failed text message and sends that same text again', () => {
+    const onRetry = vi.fn();
+    render(
+      <ChatMessage
+        message={{ ...base, status: 'failed' }}
+        now={NOW}
+        onRetry={onRetry}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    expect(onRetry).toHaveBeenCalledWith('Almuerzo 45000');
+  });
+
+  it('asks to choose the file again when a failed message had an attachment, with no retry button', () => {
+    render(
+      <ChatMessage
+        message={{
+          ...base,
+          status: 'failed',
+          attachment: { kind: 'audio', mimeType: 'audio/webm', sizeBytes: 9 },
+        }}
+        now={NOW}
+        onRetry={vi.fn()}
+      />
+    );
+    expect(screen.getByText(/Vuelve a elegir el archivo/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+  });
+
+  it('shows no retry button for messages that did not fail or when retrying is blocked', () => {
+    const { unmount } = render(
+      <ChatMessage
+        message={{ ...base, status: 'done' }}
+        now={NOW}
+        onRetry={vi.fn()}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+    unmount();
+    render(
+      <ChatMessage
+        message={{ ...base, status: 'failed' }}
+        now={NOW}
+        onRetry={vi.fn()}
+        retryDisabled
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Reintentar' })).toBeDisabled();
   });
 
   it('labels the attachment kind without showing any file content', () => {

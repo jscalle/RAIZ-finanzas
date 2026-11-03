@@ -276,6 +276,8 @@ export default function AssistantTab({
             key={m.id}
             message={m}
             now={now}
+            onRetry={(retryText) => void send(retryText)}
+            retryDisabled={sending}
             renderDraft={(draftMessage) => (
               <DraftCard
                 message={draftMessage}

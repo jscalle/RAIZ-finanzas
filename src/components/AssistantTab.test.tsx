@@ -528,6 +528,17 @@ describe('AssistantTab', () => {
     });
   });
 
+  it('lets the user retry a message that failed, sending the same text again', async () => {
+    render(<AssistantTab {...props} />);
+    act(() => emit([t('u1', { text: 'Mercado 80000', status: 'failed' })]));
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    await waitFor(() =>
+      expect(h.send).toHaveBeenCalledWith('espacio_familia', {
+        text: 'Mercado 80000',
+      })
+    );
+  });
+
   it('shows a visible message when the conversation cannot be loaded', () => {
     render(<AssistantTab {...props} />);
     act(() => fail({ code: 'permission-denied' }));

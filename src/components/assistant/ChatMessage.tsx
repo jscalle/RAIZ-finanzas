@@ -55,7 +55,17 @@ export function DraftSummary({ message }: { message: ThreadMessage }) {
   );
 }
 
-function UserStatus({ message, now }: { message: ThreadMessage; now: number }) {
+function UserStatus({
+  message,
+  now,
+  onRetry,
+  retryDisabled,
+}: {
+  message: ThreadMessage;
+  now: number;
+  onRetry?: (text: string) => void;
+  retryDisabled?: boolean;
+}) {
   if (message.status === 'analyzing') {
     const slow = now - new Date(message.createdAt).getTime() > SLOW_ANALYSIS_MS;
     return (
@@ -74,7 +84,28 @@ function UserStatus({ message, now }: { message: ThreadMessage; now: number }) {
     );
   }
   if (message.status === 'failed') {
-    return <p className="mt-1.5 text-sm font-semibold">No se pudo procesar</p>;
+    return (
+      <div className="mt-1.5 space-y-2">
+        <p className="text-sm font-semibold">No se pudo procesar</p>
+        {message.attachment ? (
+          <p className="text-sm opacity-90">
+            Vuelve a elegir el archivo para enviarlo de nuevo.
+          </p>
+        ) : (
+          onRetry &&
+          message.text && (
+            <button
+              type="button"
+              disabled={retryDisabled}
+              onClick={() => onRetry(message.text)}
+              className="min-h-[44px] rounded-full bg-primary-foreground/20 px-4 text-sm font-semibold disabled:opacity-50"
+            >
+              Reintentar
+            </button>
+          )
+        )}
+      </div>
+    );
   }
   return null;
 }
@@ -84,9 +115,18 @@ interface Props {
   now: number;
   /** Replaces the default read-only draft summary (live card with actions). */
   renderDraft?: (message: ThreadMessage) => ReactNode;
+  /** Sends the text of a failed message again. */
+  onRetry?: (text: string) => void;
+  retryDisabled?: boolean;
 }
 
-export function ChatMessage({ message, now, renderDraft }: Props) {
+export function ChatMessage({
+  message,
+  now,
+  renderDraft,
+  onRetry,
+  retryDisabled,
+}: Props) {
   if (message.role === 'user') {
     const AttachmentIcon =
       message.attachment?.kind === 'image' ? ImageIcon : Mic;
@@ -102,7 +142,12 @@ export function ChatMessage({ message, now, renderDraft }: Props) {
           {message.text && (
             <p className="whitespace-pre-wrap break-words">{message.text}</p>
           )}
-          <UserStatus message={message} now={now} />
+          <UserStatus
+            message={message}
+            now={now}
+            onRetry={onRetry}
+            retryDisabled={retryDisabled}
+          />
         </div>
       </div>
     );
