@@ -81,16 +81,19 @@ QA is a separate Firebase/GCP project: its own Firestore, rules, Cloud Run servi
      --member "serviceAccount:$(gcloud projects describe <QA_PROJECT_ID> --format='value(projectNumber)')-compute@developer.gserviceaccount.com" \
      --role roles/secretmanager.secretAccessor
    ```
-5. Create `.env.qa` at the repo root (git ignores it) with the QA web app config. Fill every variable: Vite also loads `.env`, and the script refuses a file with gaps so a QA build cannot inherit production values.
+5. Create `.env.qa` at the repo root (git ignores it) with the QA web app config. Copy the values from the Firebase console (the storage bucket suffix differs between older and newer projects). Vite also loads `.env`, so the script requires **every** `VITE_*` variable the app reads to be defined here, and refuses a file with gaps, so a QA build cannot inherit production values. The two optional ones may be empty (analytics off, and no OAuth client id), but they must be present:
    ```sh
    VITE_FIREBASE_PROJECT_ID="<QA_PROJECT_ID>"
    VITE_FIREBASE_API_KEY="..."
    VITE_FIREBASE_AUTH_DOMAIN="<QA_PROJECT_ID>.firebaseapp.com"
-   VITE_FIREBASE_STORAGE_BUCKET="<QA_PROJECT_ID>.appspot.com"
+   VITE_FIREBASE_STORAGE_BUCKET="..."
    VITE_FIREBASE_MESSAGING_SENDER_ID="..."
    VITE_FIREBASE_APP_ID="..."
    VITE_API_BASE_URL="<set after the first api deploy>"
+   VITE_FIREBASE_MEASUREMENT_ID=""
+   VITE_GOOGLE_OAUTH_CLIENT_ID=""
    ```
+   The script needs `gcloud`, the Firebase CLI and `pnpm` (the production steps above use `npm`, which also works for the build).
 
 ### Deploy
 
@@ -103,7 +106,7 @@ scripts/qa/deploy-qa.sh check            # validates names, tools and .env.qa
 scripts/qa/deploy-qa.sh web              # builds with --mode qa and deploys Hosting
 ```
 
-`api` also checks that the deployed service carries no Telegram variables, and `web` refuses to deploy a bundle that does not mention the QA project id. Open `https://<QA_PROJECT_ID>.web.app`, sign in with Google and create a test space. Use fictitious data only. If the Google consent screen is in Testing mode, add your testers there.
+`api` also reads the deployed service back and fails if it carries Telegram variables or if it cannot read it, and `web` refuses to deploy a bundle that does not mention the QA project id. Open `https://<QA_PROJECT_ID>.web.app`, sign in with Google and create a test space. Use fictitious data only. If the Google consent screen is in Testing mode, add your testers there.
 
 ### Clean-up
 

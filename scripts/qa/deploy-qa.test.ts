@@ -1,20 +1,34 @@
 // @vitest-environment node
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT = resolve(__dirname, 'deploy-qa.sh');
 let dir: string;
 let binDir: string;
 let log: string;
 
-/** Fake gcloud/firebase/pnpm that record their arguments, so nothing real can run. */
+/** Fake gcloud/firebase/pnpm that record their arguments, so nothing real can run.
+ *  QA_STUB_DESCRIBE picks what `gcloud run services describe` does: ok | fail | telegram | big. */
 function writeStubs() {
   for (const name of ['gcloud', 'firebase', 'pnpm']) {
     const file = join(binDir, name);
-    writeFileSync(file, `#!/usr/bin/env bash\necho "${name} $*" >> "${log}"\nif [[ "$*" == *"services describe"* ]]; then echo '{"spec":{}}'; fi\n`);
+    writeFileSync(
+      file,
+      `#!/usr/bin/env bash
+echo "${name} $*" >> "${log}"
+if [[ "$*" == *"services describe"* ]]; then
+  case "\${QA_STUB_DESCRIBE:-ok}" in
+    ok) echo '{"spec":{}}' ;;
+    fail) echo "permission denied" >&2; exit 1 ;;
+    telegram) echo '{"env":[{"name":"TELEGRAM_BOT_TOKEN"}]}' ;;
+    big) echo '{"TELEGRAM_BOT_TOKEN":1}'; head -c 300000 /dev/zero | tr '\\0' 'x' ;;
+  esac
+fi
+`
+    );
     chmodSync(file, 0o755);
   }
 }
@@ -36,16 +50,30 @@ const FULL_ENV = [
   'VITE_FIREBASE_MESSAGING_SENDER_ID="000000000000"',
   'VITE_FIREBASE_APP_ID="1:000000000000:web:placeholder"',
   'VITE_API_BASE_URL="https://example-qa.run.app"',
+  'VITE_FIREBASE_MEASUREMENT_ID=""',
+  'VITE_GOOGLE_OAUTH_CLIENT_ID=""',
 ].join('\n');
+
+/** Every VITE_* variable the app source reads (same rule the script uses). */
+function viteVarsReadByApp(): string[] {
+  const root = resolve(__dirname, '../..');
+  const found = new Set<string>();
+  for (const rel of readdirSync(join(root, 'src'), { recursive: true }) as string[]) {
+    if (!/\.(ts|tsx)$/.test(rel) || /\.test\./.test(rel)) continue;
+    for (const m of readFileSync(join(root, 'src', rel), 'utf8').matchAll(/VITE_[A-Z0-9_]+/g)) found.add(m[0]);
+  }
+  return [...found].sort();
+}
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'deploy-qa-'));
   binDir = join(dir, 'bin');
   log = join(dir, 'calls.log');
-  require('node:fs').mkdirSync(binDir);
+  mkdirSync(binDir);
   writeStubs();
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
+beforeEach(() => rmSync(log, { force: true }));
 
 const QA = { QA_PROJECT_ID: 'raiz-qa-test' };
 const calls = () => (existsSync(log) ? readFileSync(log, 'utf8') : '');
@@ -151,5 +179,65 @@ describe('deploy-qa.sh web build config', () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain('pnpm exec vite build --mode qa');
     expect(r.out).toContain('firebase deploy --only hosting --project raiz-qa-test');
+  });
+});
+
+describe('deploy-qa.sh Telegram check (api)', () => {
+  it.each(['fail', 'telegram', 'big'])('fails when describe is %s instead of reporting ok', (mode) => {
+    const r = run(['api', '--yes'], { ...QA, QA_STUB_DESCRIBE: mode });
+    expect(r.code).toBe(1);
+    expect(r.out).not.toContain('ok: no Telegram variables');
+  });
+
+  it('explains that it could not read the service when describe fails', () => {
+    const r = run(['api', '--yes'], { ...QA, QA_STUB_DESCRIBE: 'fail' });
+    expect(r.out).toContain('could not read the deployed service');
+  });
+});
+
+describe('deploy-qa.sh env file covers every variable the app reads', () => {
+  it('has a test fixture that covers all of them, so a new variable fails here first', () => {
+    const covered = FULL_ENV.split('\n').map((l) => l.split('=')[0]);
+    expect(viteVarsReadByApp().filter((k) => !covered.includes(k))).toEqual([]);
+  });
+
+  it.each(['VITE_FIREBASE_MEASUREMENT_ID', 'VITE_GOOGLE_OAUTH_CLIENT_ID'])('fails when %s is not defined, so a production .env value cannot leak', (key) => {
+    const file = join(dir, `no-${key}.env`);
+    writeFileSync(file, FULL_ENV.split('\n').filter((l) => !l.startsWith(`${key}=`)).join('\n'));
+    const r = run(['web', '--dry-run'], { ...QA, QA_ENV_FILE: file });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`${key} is read by the app`);
+  });
+
+  it('accepts those variables defined as empty', () => {
+    const file = join(dir, 'empty-optional.env');
+    writeFileSync(file, FULL_ENV);
+    expect(run(['web', '--dry-run'], { ...QA, QA_ENV_FILE: file }).code).toBe(0);
+  });
+});
+
+describe('deploy-qa.sh input validation', () => {
+  it.each([
+    ['QA_PROJECT_ID', 'my app-qa'],
+    ['QA_PROJECT_ID', 'qa'],
+    ['QA_REGION', 'us-central1;touch /tmp/x'],
+    ['QA_REGION', 'Central'],
+    ['QA_SERVICE', 'My-API-qa'],
+    ['QA_GEMINI_SECRET', 'a,TELEGRAM_BOT_TOKEN=tg'],
+    ['QA_EXTRA_ORIGINS', 'https://a.com@TELEGRAM_BOT_TOKEN=evil'],
+    ['QA_EXTRA_ORIGINS', '*'],
+    ['QA_EXTRA_ORIGINS', 'https://a.com/path'],
+    ['QA_EXTRA_ORIGINS', 'https://ok.example.com,'],
+  ])('rejects %s=%j and runs nothing', (name, value) => {
+    const r = run(['api', '--yes'], { ...QA, [name]: value });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('error:');
+    expect(calls()).not.toContain('gcloud run deploy');
+  });
+
+  it('accepts a normal extra origin list', () => {
+    const r = run(['api', '--dry-run'], { ...QA, QA_EXTRA_ORIGINS: 'https://qa.example.com,http://localhost:5173' });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('https://qa.example.com,http://localhost:5173');
   });
 });

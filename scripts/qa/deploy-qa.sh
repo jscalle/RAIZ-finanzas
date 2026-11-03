@@ -65,6 +65,17 @@ REGION="${QA_REGION:-us-central1}"
 SERVICE="${QA_SERVICE:-finpersonal-api-qa}"
 SECRET="${QA_GEMINI_SECRET:-gemini-api-key}"
 ENV_FILE="${QA_ENV_FILE:-.env.qa}"
+
+# Every value below ends up in a gcloud/firebase command line (and some in a delimiter-separated
+# env list), so each one is checked for its exact shape before anything is built from it.
+ORIGIN_RE='https?://[a-z0-9.-]+(:[0-9]{1,5})?'
+[[ "$QA_PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || fail "QA_PROJECT_ID must be a valid GCP project id (6-30 chars, lowercase letters, digits and hyphens)."
+[[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || fail "QA_REGION must look like us-central1."
+[[ "$SERVICE" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || fail "QA_SERVICE must be a valid Cloud Run service name (lowercase letters, digits and hyphens)."
+[[ "$SECRET" =~ ^[A-Za-z0-9_-]{1,255}$ ]] || fail "QA_GEMINI_SECRET must be a Secret Manager secret name (letters, digits, - and _)."
+if [[ -n "${QA_EXTRA_ORIGINS:-}" ]]; then
+  [[ "$QA_EXTRA_ORIGINS" =~ ^${ORIGIN_RE}(,${ORIGIN_RE})*$ ]] || fail "QA_EXTRA_ORIGINS must be exact origins separated by commas (for example https://qa.example.com), with no wildcards, paths or spaces."
+fi
 ORIGINS="https://${QA_PROJECT_ID}.web.app,https://${QA_PROJECT_ID}.firebaseapp.com${QA_EXTRA_ORIGINS:+,${QA_EXTRA_ORIGINS}}"
 
 is_qa_name() { [[ "$1" =~ (^|-)(qa|dev|test|staging)(-|$) ]]; }
@@ -91,6 +102,14 @@ check_env_file() {
   done
   [[ "$(env_value VITE_FIREBASE_PROJECT_ID)" == "$QA_PROJECT_ID" ]] \
     || fail "VITE_FIREBASE_PROJECT_ID in $ENV_FILE does not match QA_PROJECT_ID."
+  # Every other VITE_* variable the app reads must at least be defined (empty is fine), otherwise
+  # the value from a production .env would be baked into the QA bundle.
+  local referenced
+  referenced="$(grep -rhoE --exclude='*.test.*' 'VITE_[A-Z0-9_]+' src vite.config.ts 2> /dev/null | sort -u || true)"
+  for key in $referenced; do
+    grep -q "^${key}=" "$ENV_FILE" \
+      || fail "$key is read by the app but not defined in $ENV_FILE. Define it (empty is fine) so a production .env value cannot leak into the QA build."
+  done
 }
 
 check_tools() {
@@ -137,7 +156,11 @@ cmd_api() {
     --set-env-vars "^@^GOOGLE_CLOUD_PROJECT=${QA_PROJECT_ID}@CORS_ALLOWED_ORIGINS=${ORIGINS}" \
     --set-secrets "GEMINI_API_KEY=${SECRET}:latest"
   if [[ "$DRY_RUN" == 0 ]]; then
-    if gcloud run services describe "$SERVICE" --project "$QA_PROJECT_ID" --region "$REGION" --format=json | grep -q "TELEGRAM"; then
+    # Capture first: piping into "grep -q" would report "clean" when describe fails or grep exits early.
+    local described
+    described="$(gcloud run services describe "$SERVICE" --project "$QA_PROJECT_ID" --region "$REGION" --format=json)" \
+      || fail "could not read the deployed service to verify it has no Telegram variables. Check it manually before using this QA environment."
+    if grep -q "TELEGRAM" <<< "$described"; then
       fail "the QA service has Telegram variables. Remove them: gcloud run services update $SERVICE --project $QA_PROJECT_ID --region $REGION --remove-env-vars TELEGRAM_BOT_TOKEN,TELEGRAM_WEBHOOK_SECRET"
     fi
     echo "ok: no Telegram variables on $SERVICE."
