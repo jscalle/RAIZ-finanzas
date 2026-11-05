@@ -104,7 +104,8 @@ GOOGLE_CLOUD_PROJECT="tu-proyecto-id"
 # Elige UNA opción de IA:
 # Opción A: API Key de Google AI Studio (https://aistudio.google.com/apikey)
 GEMINI_API_KEY="tu-gemini-api-key"
-# Opción B: Vertex AI en Google Cloud (Cloud Run sin API Key)
+# Opción B: Vertex AI en Google Cloud (Cloud Run sin API Key). Deja GEMINI_API_KEY vacío;
+# usa el GOOGLE_CLOUD_PROJECT de arriba como proyecto de Vertex AI.
 VERTEX_AI_LOCATION="global"
 
 # Opcional, solo en local: JSON de una cuenta de servicio para Firebase Admin
