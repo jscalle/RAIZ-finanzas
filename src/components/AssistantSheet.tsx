@@ -18,13 +18,33 @@ interface Props {
 const OPEN_MS = 400;
 const CLOSE_MS = 300;
 const SWIPE_CLOSE_PX = 90;
+const DEFAULT_PANEL_WIDTH = 420;
+const MIN_PANEL_WIDTH = 340;
+const MAX_PANEL_WIDTH = 860;
+const PANEL_WIDTH_STORAGE_KEY = 'p_assistant_width';
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])';
+
+function readStoredPanelWidth(): number {
+  try {
+    const raw =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem(PANEL_WIDTH_STORAGE_KEY)
+        : null;
+    if (!raw) return DEFAULT_PANEL_WIDTH;
+    const parsed = parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return DEFAULT_PANEL_WIDTH;
+    return Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, parsed));
+  } catch {
+    return DEFAULT_PANEL_WIDTH;
+  }
+}
 
 /**
  * The assistant as a layer over the app. On a phone it is a bottom sheet (full width, 88% of the
  * height) that grows out of the bubble, with the app still visible in the strip above and a close
- * button there. On a large screen it is a side panel on the right that leaves the page usable.
+ * button there. On a large screen it is a side panel on the right that leaves the page usable
+ * and can be horizontally resized via drag-and-drop on its left edge.
  */
 export function AssistantSheet({
   open,
@@ -38,6 +58,11 @@ export function AssistantSheet({
   const dialog = useRef<HTMLDivElement>(null);
   const [pullY, setPullY] = useState(0);
   const pull = useRef<number | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(readStoredPanelWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStart = useRef<{ startX: number; startWidth: number } | null>(
+    null
+  );
   const keyboard = useKeyboardInset(open && !isLarge);
 
   useBackToClose(open && !isLarge, onClose);
@@ -64,19 +89,78 @@ export function AssistantSheet({
   };
 
   if (isLarge) {
+    const onResizeDown = (e: PointerEvent<HTMLDivElement>) => {
+      resizeStart.current = { startX: e.clientX, startWidth: panelWidth };
+      setIsResizing(true);
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    };
+
+    const onResizeMove = (e: PointerEvent<HTMLDivElement>) => {
+      if (!resizeStart.current) return;
+      const delta = resizeStart.current.startX - e.clientX;
+      const viewportCap =
+        typeof window !== 'undefined' && window.innerWidth > 400
+          ? Math.min(MAX_PANEL_WIDTH, window.innerWidth - 80)
+          : MAX_PANEL_WIDTH;
+      const nextWidth = Math.min(
+        viewportCap,
+        Math.max(MIN_PANEL_WIDTH, resizeStart.current.startWidth + delta)
+      );
+      setPanelWidth(nextWidth);
+    };
+
+    const onResizeUp = () => {
+      if (!resizeStart.current) return;
+      resizeStart.current = null;
+      setIsResizing(false);
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, String(panelWidth));
+        }
+      } catch {
+        // Ignore storage write failures
+      }
+    };
+
     return (
       <aside
         aria-label="Asistente"
         data-state={state}
         inert={!open}
-        className="fixed right-0 top-0 z-[45] flex h-dvh w-[420px] max-w-full flex-col border-l border-border bg-background shadow-2xl transition-transform duration-300 ease-out motion-reduce:transition-none"
+        className={`fixed right-0 top-0 z-[45] flex h-dvh w-[420px] max-w-full flex-col border-l border-border bg-background shadow-2xl ${
+          isResizing
+            ? 'select-none transition-none'
+            : 'transition-transform duration-300 ease-out motion-reduce:transition-none'
+        }`}
         style={{
           ...hiddenWhenClosed,
+          width: `${panelWidth}px`,
           transform: open ? 'translateX(0)' : 'translateX(100%)',
-          transitionProperty: 'transform, visibility',
+          transitionProperty: isResizing ? 'none' : 'transform, visibility',
           transitionDelay: open ? '0s' : `0s, ${CLOSE_MS}ms`,
         }}
       >
+        <div
+          data-testid="assistant-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Ajustar ancho del asistente"
+          title="Arrastra para ajustar el ancho"
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          className="group absolute bottom-0 left-0 top-0 z-10 flex w-2.5 -translate-x-1/2 cursor-ew-resize touch-none items-center justify-center"
+        >
+          <span
+            aria-hidden="true"
+            className={`h-12 w-1 rounded-full transition-colors ${
+              isResizing
+                ? 'bg-primary'
+                : 'bg-border/60 group-hover:bg-primary/60'
+            }`}
+          />
+        </div>
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
           <h2 className="text-base font-semibold text-foreground">Asistente</h2>
           <button

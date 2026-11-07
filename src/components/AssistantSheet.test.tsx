@@ -200,4 +200,23 @@ describe('AssistantSheet on a large screen', () => {
     expect(panel).toHaveAttribute('inert');
     expect(panel.style.visibility).toBe('hidden');
   });
+
+  it('allows horizontal drag-to-resize on the left edge and clamps width within bounds', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1280,
+    });
+    setup();
+    const panel = screen.getByRole('complementary', { name: 'Asistente' });
+    const handle = screen.getByTestId('assistant-resize-handle');
+
+    expect(panel.style.width).toBe('420px');
+
+    fireEvent.pointerDown(handle, { clientX: 860, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientX: 700, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 700, pointerId: 1 });
+
+    // Dragging left by 160px increases the right-anchored panel width from 420px to 580px
+    expect(panel.style.width).toBe('580px');
+  });
 });
