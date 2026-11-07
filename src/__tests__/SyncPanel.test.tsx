@@ -78,62 +78,54 @@ describe('SyncPanel signed out', () => {
     expect(props.onLogin).toHaveBeenCalledTimes(1);
   });
 
-  it('hides the email form until the toggle is opened', () => {
+  it('offers only "Continuar con Google" without an email/password form', () => {
     renderPanel();
 
-    const toggle = screen.getByRole('button', {
-      name: /Usar correo y contraseña/i,
-    });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(
+      screen.getByRole('button', { name: /Continuar con Google/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Usar correo y contraseña/i })
+    ).toBeNull();
     expect(screen.queryByLabelText(/Correo electrónico/i)).toBeNull();
     expect(screen.queryByLabelText(/^Contraseña/i)).toBeNull();
+  });
+});
 
-    fireEvent.click(toggle);
+describe('SyncPanel Account preferences & OS automation', () => {
+  it('switches theme mode between Claro, Oscuro and Sistema', () => {
+    const onThemeModeChange = vi.fn();
+    renderSignedIn({ themeMode: 'system', onThemeModeChange });
 
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByLabelText(/Correo electrónico/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^Contraseña/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Oscuro/i }));
+    expect(onThemeModeChange).toHaveBeenCalledWith('dark');
+
+    fireEvent.click(screen.getByRole('button', { name: /Claro/i }));
+    expect(onThemeModeChange).toHaveBeenCalledWith('light');
   });
 
-  it('submits the email form and switches to register mode', async () => {
-    const props = renderPanel();
-    fireEvent.click(
-      screen.getByRole('button', { name: /Usar correo y contraseña/i })
-    );
-    fireEvent.change(screen.getByLabelText(/Correo electrónico/i), {
-      target: { value: ' a@b.com ' },
+  it('shows active Android NotificationListener card and locked iOS card', async () => {
+    const onToggleAndroidAuto = vi.fn();
+    renderSignedIn({
+      androidAutoEnabled: false,
+      onToggleAndroidAuto,
+      detectedOS: 'android',
     });
-    fireEvent.change(screen.getByLabelText(/^Contraseña/i), {
-      target: { value: 'secret1' },
+
+    expect(screen.getByText(/Android detectado/i)).toBeInTheDocument();
+    const androidBtn = screen.getByRole('button', {
+      name: /Conectar Notificaciones en Android/i,
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
+    fireEvent.click(androidBtn);
     await waitFor(() =>
-      expect(props.onEmailLogin).toHaveBeenCalledWith('a@b.com', 'secret1')
+      expect(onToggleAndroidAuto).toHaveBeenCalledWith(true)
     );
 
-    fireEvent.click(
-      screen.getByRole('button', { name: /¿No tienes cuenta\?/i })
-    );
+    const iosCard = screen.getByTestId('ios-automation-locked');
+    expect(iosCard).toHaveAttribute('aria-disabled', 'true');
     expect(
-      screen.getByRole('button', { name: /Registrarse e Iniciar Sesión/i })
-    ).toBeInTheDocument();
-  });
-
-  it('shows the error returned by a failed email login', async () => {
-    const onEmailLogin = vi.fn().mockRejectedValue(new Error('Clave inválida'));
-    renderPanel({ onEmailLogin });
-    fireEvent.click(
-      screen.getByRole('button', { name: /Usar correo y contraseña/i })
-    );
-    fireEvent.change(screen.getByLabelText(/Correo electrónico/i), {
-      target: { value: 'a@b.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/^Contraseña/i), {
-      target: { value: 'secret1' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
-
-    expect(await screen.findByText('Clave inválida')).toBeInTheDocument();
+      screen.getByRole('button', { name: /Próximamente en iOS/i })
+    ).toBeDisabled();
   });
 });
 

@@ -407,55 +407,46 @@ describe('App signed-in + cloud sync', () => {
     expect(screen.getByText('Trabajando en modo local.')).toBeInTheDocument();
   });
 
-  it('signs in through the email form and enters the authenticated state', async () => {
-    H.control.autoSignIn = false; // start signed OUT to exercise the form
+  it('presents the mandatory Google login gate as the first contact when signed out and signs in with Google', async () => {
+    H.control.autoSignIn = false; // start signed OUT
     render(<App />);
-    await openSyncSettings();
 
-    // The signed-out branch keeps the email/password form behind a toggle.
-    openEmailForm();
-    fireEvent.change(screen.getByPlaceholderText('ejemplo@correo.com'), {
-      target: { value: 'user@mail.com' },
+    expect(await screen.findByTestId('mandatory-login-gate')).toBeInTheDocument();
+    expect(screen.getByText('Bienvenido a Raíz')).toBeInTheDocument();
+    const googleBtn = screen.getByRole('button', {
+      name: /Continuar con Google/i,
     });
-    fireEvent.change(screen.getByPlaceholderText('Mínimo 6 caracteres'), {
-      target: { value: 'secret1' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Ingresar' }));
+    expect(
+      screen.queryByRole('button', { name: /Usar correo y contraseña/i })
+    ).toBeNull();
 
-    // The mocked emailSignIn is invoked with the trimmed credentials and the
-    // app transitions to the connected experience.
+    fireEvent.click(googleBtn);
+
     await waitFor(() =>
-      expect(H.spy.emailSignIn).toEqual([['user@mail.com', 'secret1']])
+      expect(screen.getByText(/Conectado al espacio/i)).toBeInTheDocument()
     );
-    expect(await screen.findByText('tester@demo.com')).toBeInTheDocument();
+    expect(await screen.findByText('espacio_u_uid_test')).toBeInTheDocument();
   });
 
-  it('registers a new account through the email form', async () => {
-    H.control.autoSignIn = false;
+  it('automatically registers an expense when an Android bank notification arrives', async () => {
     render(<App />);
     await openSyncSettings();
 
-    // Open the form, toggle it into register mode, then submit.
-    openEmailForm();
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: /¿No tienes cuenta\? Regístrate gratis aquí/i,
-      })
-    );
-    fireEvent.change(screen.getByPlaceholderText('ejemplo@correo.com'), {
-      target: { value: 'new@mail.com' },
+    const connectBtn = await screen.findByRole('button', {
+      name: /Conectar Notificaciones en Android/i,
     });
-    fireEvent.change(screen.getByPlaceholderText('Mínimo 6 caracteres'), {
-      target: { value: 'pass123' },
-    });
-    fireEvent.click(
-      screen.getByRole('button', { name: /Registrarse e Iniciar Sesión/i })
-    );
+    fireEvent.click(connectBtn);
 
-    await waitFor(() =>
-      expect(H.spy.emailSignUp).toEqual([['new@mail.com', 'pass123']])
-    );
-    expect(await screen.findByText('tester@demo.com')).toBeInTheDocument();
+    const simulateBtn = await screen.findByRole('button', {
+      name: /Simular notificación bancaria/i,
+    });
+    fireEvent.click(simulateBtn);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/Automatización Android Activa/i)
+      ).toBeInTheDocument();
+    });
   });
 
   it('does not offer Gmail Sync in the sidebar nor in the mobile more menu', async () => {

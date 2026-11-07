@@ -10,6 +10,7 @@ import {
   CloudOff,
   LayoutDashboard,
   Loader2,
+  Lock,
   Menu,
   RefreshCw,
   Shapes,
@@ -17,6 +18,7 @@ import {
   Target,
   TrendingDown,
   TrendingUp,
+  User as UserIcon,
   X,
 } from 'lucide-react';
 import {
@@ -136,10 +138,19 @@ import {
 } from './lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 const SyncPanel = lazy(() => import('./components/SyncPanel'));
+import type { ThemeMode } from './components/SyncPanel';
 import { User } from 'firebase/auth';
 import { useProfileStorage } from './hooks/useProfileStorage';
 import { useGmailSync } from './hooks/useGmailSync';
 import { addToSyncQueue, flushSyncQueue, getSyncQueue } from './lib/syncQueue';
+import { parseEmailMovement } from './lib/gmail';
+import {
+  connectAndroidNotificationListener,
+  disconnectAndroidNotificationListener,
+  isAndroidNotificationEnabledInStorage,
+  parseBankNotificationFallback,
+  subscribeToAndroidBankNotifications,
+} from './lib/notificationAutomation';
 
 const DEMO_SEED_IDS = new Set([
   'exp_1',
@@ -162,7 +173,18 @@ export default function App() {
   // Lock profile to default to eliminate custom demo profiles
   const profile = 'default';
 
-  // State configurations for privacy control
+  // State configurations for privacy control and theme mode
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem('p_theme_mode');
+    return saved === 'light' || saved === 'dark' || saved === 'system'
+      ? saved
+      : 'system';
+  });
+
+  const [androidAutoEnabled, setAndroidAutoEnabled] = useState<boolean>(() =>
+    isAndroidNotificationEnabledInStorage()
+  );
+
   const [privacyMode, setPrivacyMode] = useState<'real' | 'masked' | 'scaled'>(
     () => {
       const local = localStorage.getItem('p_privacy_mode');
@@ -293,7 +315,20 @@ export default function App() {
     };
   }, []);
 
-  // Keep privacy and active config parameters synced
+  // Keep privacy, theme, and active config parameters synced
+  useEffect(() => {
+    localStorage.setItem('p_theme_mode', themeMode);
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      root.classList.remove('light', 'dark');
+      if (themeMode === 'light') {
+        root.classList.add('light');
+      } else if (themeMode === 'dark') {
+        root.classList.add('dark');
+      }
+    }
+  }, [themeMode]);
+
   useEffect(() => {
     localStorage.setItem('p_privacy_mode', privacyMode);
   }, [privacyMode]);
@@ -2126,6 +2161,132 @@ export default function App() {
     deleteRecord('withdrawals', id, setWithdrawals);
   };
 
+  // Automatic ingestion of bank notifications (Android NotificationListenerService / Push / SMS)
+  const handleAutoIngestBankNotification = useCallback(
+    async (rawNotificationText?: string) => {
+      const text = (
+        rawNotificationText ||
+        'Bancolombia le informa Compra por $48.500 en CREPES Y WAFFLES con T.Debito *4321'
+      ).trim();
+      if (!text) return;
+
+      const todayISO = getColombiaDateISO();
+      let type: 'INCOME' | 'EXPENSE' = 'EXPENSE';
+      let amount = 0;
+      let description = 'Movimiento bancario automático';
+      let targetCategory = '';
+      let paymentMethod: 'DEBITO' | 'CREDITO' = 'DEBITO';
+
+      try {
+        const categories = topics.map((t) => t.name);
+        const idToken =
+          user && typeof user.getIdToken === 'function'
+            ? await user.getIdToken()
+            : null;
+        const parsed = await parseEmailMovement(text, categories, idToken);
+        if (parsed && typeof parsed.amount === 'number' && parsed.amount > 0) {
+          type = parsed.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+          amount = Math.ceil(parsed.amount);
+          description = parsed.description || description;
+          targetCategory = parsed.targetCategory || '';
+          paymentMethod = /cr[eé]dito|tc\b/i.test(text) ? 'CREDITO' : 'DEBITO';
+        }
+      } catch {
+        // Fallback to deterministic local parser below
+      }
+
+      if (amount <= 0) {
+        const fallback = parseBankNotificationFallback(text);
+        if (!fallback) {
+          setToast({
+            message:
+              'Se recibió una notificación pero no se detectó un monto válido.',
+            type: 'warning',
+          });
+          return;
+        }
+        type = fallback.type;
+        amount = fallback.amount;
+        description = fallback.description;
+        paymentMethod = fallback.paymentMethod;
+      }
+
+      const matchedTopic =
+        (targetCategory &&
+          topics.find(
+            (t) => t.name.toLowerCase() === targetCategory.toLowerCase()
+          )) ||
+        topics.find((t) =>
+          type === 'INCOME'
+            ? t.type === 'INCOME' || t.type === 'BOTH'
+            : t.type === 'EXPENSE' || t.type === 'BOTH'
+        ) ||
+        topics[0];
+
+      const topicId = matchedTopic ? matchedTopic.id : 'default';
+
+      if (type === 'INCOME') {
+        handleAddIncome(
+          description,
+          amount,
+          topicId,
+          todayISO,
+          true,
+          'DIGITAL',
+          'SMS_PUSH',
+          'VERIFIED'
+        );
+      } else {
+        handleAddExpense(
+          description,
+          amount,
+          topicId,
+          todayISO,
+          'INGRESOS',
+          true,
+          paymentMethod,
+          'SMS_PUSH',
+          'VERIFIED'
+        );
+      }
+
+      setToast({
+        message: `⚡ Movimiento registrado automáticamente: ${description} ($${amount.toLocaleString('es-CO')})`,
+        type: 'success',
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [topics, user, currentSpaceId, personalSpaceId, syncEnabled]
+  );
+
+  const handleToggleAndroidAuto = useCallback(async (enabled: boolean) => {
+    if (enabled) {
+      await connectAndroidNotificationListener();
+      setAndroidAutoEnabled(true);
+      setToast({
+        message:
+          '¡Automatización Android conectada! Tus compras y transferencias se registrarán solas.',
+        type: 'success',
+      });
+    } else {
+      disconnectAndroidNotificationListener();
+      setAndroidAutoEnabled(false);
+      setToast({
+        message: 'Automatización de notificaciones Android desactivada.',
+        type: 'info',
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!androidAutoEnabled) return;
+    const unsub = subscribeToAndroidBankNotifications((event) => {
+      const fullText = `${event.title || ''} ${event.text || ''}`.trim();
+      void handleAutoIngestBankNotification(fullText);
+    });
+    return () => unsub();
+  }, [androidAutoEnabled, handleAutoIngestBankNotification]);
+
   // Auto-sync Gmail bank alerts when connected to a Cloud Space, plus the manual
   // "refresh all data" handler. Extracted into useGmailSync; called here so the
   // auto-sync effect registers last, preserving the original effect ordering.
@@ -2262,9 +2423,9 @@ export default function App() {
                   },
                   {
                     id: 'sync_settings',
-                    label: 'Nube y Compartir',
-                    hint: 'Espacio compartido',
-                    icon: CloudLightning,
+                    label: 'Cuenta',
+                    hint: 'Nube y Compartir',
+                    icon: UserIcon,
                   },
                 ],
               },
@@ -2533,14 +2694,14 @@ export default function App() {
                   className="flex items-center gap-4 rounded-2xl p-4 transition-colors hover:bg-muted"
                 >
                   <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                    <CloudLightning className="h-6 w-6" />
+                    <UserIcon className="h-6 w-6" />
                   </div>
                   <div className="text-left">
                     <div className="font-semibold text-foreground">
-                      Nube y Compartir
+                      Cuenta
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      Opciones de sincronización
+                      Nube y Compartir
                     </div>
                   </div>
                 </button>
@@ -2593,6 +2754,58 @@ export default function App() {
 
       {/* MAIN CONTAINER */}
       <main className="flex-1 overflow-y-auto pb-36 outline-none md:pb-10">
+        {!isAuthLoading && !user && activeTab !== 'sync_settings' ? (
+          <div className="max-w-lg mx-auto px-4 py-12 md:py-24">
+            <div
+              data-testid="mandatory-login-gate"
+              className="rounded-3xl border border-border bg-card p-6 sm:p-8 shadow-xl space-y-6 text-center"
+            >
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 shadow-sm">
+                <img
+                  src="/brand/raiz-logo.jpeg"
+                  alt="RAÍZ Finanzas"
+                  className="h-14 w-14 rounded-xl object-cover"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <span className="inline-block text-[11px] bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                  Sin conexión
+                </span>
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                  Bienvenido a Raíz
+                </h2>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Inicia sesión con tu cuenta de Google para crear tu espacio en
+                  la nube, activar el Asistente IA y automatizar tus movimientos
+                  bancarios.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogin}
+                className="w-full min-h-12 py-3.5 bg-cyan-400 hover:bg-cyan-300 text-[#070809] rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-500/10"
+              >
+                <Lock className="h-4 w-4" />
+                Continuar con Google
+              </button>
+
+              <p className="text-xs text-muted-foreground/80">
+                ¿Primera vez?{' '}
+                <a
+                  href="/guia"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline underline-offset-2"
+                >
+                  Mira la guía de inicio
+                </a>
+                .
+              </p>
+            </div>
+          </div>
+        ) : (
         <div className="max-w-5xl mx-auto px-4 py-6 md:px-8 md:py-10">
           <PendingTransactionsBanner
             pendingTransactions={pendingTransactions}
@@ -2778,6 +2991,13 @@ export default function App() {
                       expenses.length > 0
                     }
                     onRevokeMember={handleRevokeMember}
+                    themeMode={themeMode}
+                    onThemeModeChange={setThemeMode}
+                    privacyMode={privacyMode}
+                    onPrivacyModeChange={setPrivacyMode}
+                    androidAutoEnabled={androidAutoEnabled}
+                    onToggleAndroidAuto={handleToggleAndroidAuto}
+                    onSimulateBankNotification={handleAutoIngestBankNotification}
                   />
                 )}
 
@@ -2793,6 +3013,7 @@ export default function App() {
             </motion.div>
           </AnimatePresence>
         </div>
+        )}
       </main>
     </div>
   );
