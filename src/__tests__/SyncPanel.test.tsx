@@ -104,6 +104,16 @@ describe('SyncPanel Account preferences & OS automation', () => {
     expect(onThemeModeChange).toHaveBeenCalledWith('light');
   });
 
+  it('hides the entire bank automation section on Desktop (web)', () => {
+    renderSignedIn({ detectedOS: 'web' });
+
+    expect(
+      screen.queryByText(/Registro Automático de Movimientos Bancarios/i)
+    ).toBeNull();
+    expect(screen.queryByTestId('android-automation-card')).toBeNull();
+    expect(screen.queryByTestId('ios-automation-card')).toBeNull();
+  });
+
   it('renders only Android NotificationListener card when OS is Android (hiding iOS)', async () => {
     const onToggleAndroidAuto = vi.fn();
     renderSignedIn({

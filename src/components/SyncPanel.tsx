@@ -121,9 +121,6 @@ export default function SyncPanel({
   const [connectingAndroid, setConnectingAndroid] = useState(false);
   const [connectingIos, setConnectingIos] = useState(false);
   const [simulatingTx, setSimulatingTx] = useState(false);
-  const [selectedWebOS, setSelectedWebOS] = useState<'android' | 'ios'>(
-    'android'
-  );
 
   const activeTheme = onThemeModeChange ? themeMode : localTheme;
   const isAndroidConnected =
@@ -133,8 +130,6 @@ export default function SyncPanel({
   const isIosConnected =
     typeof iosAutoEnabled === 'boolean' ? iosAutoEnabled : localIosEnabled;
   const os = detectedOS ?? detectDeviceOS();
-  const activeMobileOS: 'android' | 'ios' =
-    os === 'android' ? 'android' : os === 'ios' ? 'ios' : selectedWebOS;
 
   const handleThemeSelect = (mode: ThemeMode) => {
     if (onThemeModeChange) {
@@ -421,308 +416,277 @@ export default function SyncPanel({
               </div>
             </section>
 
-            {/* OS Banking Automation Section (Strictly conditional by OS) */}
-            <section
-              className="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5 space-y-4"
-              aria-labelledby="account-automation"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="space-y-1">
-                  <h3
-                    id="account-automation"
-                    className="text-sm font-bold text-foreground flex items-center gap-2"
-                  >
-                    <Zap className="h-4 w-4 text-primary shrink-0" />
-                    Registro Automático de Movimientos Bancarios
-                  </h3>
-                  <p className={helpClass}>
-                    Detecta compras, pagos y transferencias de tus notificaciones
-                    bancarias e insértalos automáticamente sin digitar nada.
-                  </p>
-                </div>
-
-                {os === 'web' ? (
-                  <div
-                    role="group"
-                    aria-label="Sistema operativo móvil"
-                    className="inline-flex items-center rounded-xl border border-border bg-card p-1 self-start sm:self-center shrink-0"
-                  >
-                    <button
-                      type="button"
-                      aria-pressed={activeMobileOS === 'android'}
-                      onClick={() => setSelectedWebOS('android')}
-                      className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                        activeMobileOS === 'android'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
+            {/* OS Banking Automation Section (Only rendered on mobile/PWA: Android or iOS, hidden on Desktop) */}
+            {(os === 'android' || os === 'ios') && (
+              <section
+                className="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5 space-y-4"
+                aria-labelledby="account-automation"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="space-y-1">
+                    <h3
+                      id="account-automation"
+                      className="text-sm font-bold text-foreground flex items-center gap-2"
                     >
-                      Android
-                    </button>
-                    <button
-                      type="button"
-                      aria-pressed={activeMobileOS === 'ios'}
-                      onClick={() => setSelectedWebOS('ios')}
-                      className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                        activeMobileOS === 'ios'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      iOS (iPhone)
-                    </button>
+                      <Zap className="h-4 w-4 text-primary shrink-0" />
+                      Registro Automático de Movimientos Bancarios
+                    </h3>
+                    <p className={helpClass}>
+                      Detecta compras, pagos y transferencias de tus notificaciones
+                      bancarias e insértalos automáticamente sin digitar nada.
+                    </p>
                   </div>
-                ) : (
+
                   <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-primary/15 text-primary border border-primary/30 self-start sm:self-center shrink-0">
                     <Smartphone className="h-3.5 w-3.5" />
                     {os === 'android' ? 'Android detectado' : 'iOS detectado'}
                   </span>
-                )}
-              </div>
-
-              {activeMobileOS === 'android' ? (
-                /* ANDROID ONLY: NotificationListener Card */
-                <div
-                  data-testid="android-automation-card"
-                  className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                        <ShieldCheck className="h-4 w-4" />
-                        Android · NotificationListener
-                      </span>
-                      <span
-                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
-                          isAndroidConnected
-                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                            : 'bg-muted text-muted-foreground border-border'
-                        }`}
-                      >
-                        {isAndroidConnected ? 'Conectado' : 'Sin conectar'}
-                      </span>
-                    </div>
-
-                    <p className={helpClass}>
-                      Con un solo clic, autoriza a Raíz para leer las alertas de
-                      tus bancos en segundo plano y registrar gastos e ingresos
-                      automáticamente.
-                    </p>
-
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {SUPPORTED_BANK_PACKAGES.map((pkg) => (
-                        <span
-                          key={pkg.packageName}
-                          className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60"
-                        >
-                          {pkg.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <button
-                      type="button"
-                      disabled={connectingAndroid}
-                      onClick={handleAndroidConnectClick}
-                      className={`w-full min-h-11 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                        isAndroidConnected
-                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-primary hover:opacity-90 text-primary-foreground shadow-sm'
-                      }`}
-                    >
-                      {connectingAndroid ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Conectando permiso...
-                        </>
-                      ) : isAndroidConnected ? (
-                        <>
-                          <Check className="h-4 w-4" />
-                          Automatización Android Activa (Desconectar)
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="h-4 w-4" />
-                          Conectar Notificaciones en Android
-                        </>
-                      )}
-                    </button>
-
-                    {isAndroidConnected && onSimulateBankNotification && (
-                      <button
-                        type="button"
-                        disabled={simulatingTx}
-                        onClick={handleSimulateClick}
-                        className="w-full min-h-9 px-3 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        {simulatingTx ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                            Registrando movimiento automático...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-3.5 w-3.5 text-primary" />
-                            Simular notificación bancaria (Prueba automática)
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
                 </div>
-              ) : (
-                /* iOS ONLY: Automatic Shortcut & Magic URL Card */
-                <div
-                  data-testid="ios-automation-card"
-                  className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
-                        <Smartphone className="h-4 w-4" />
-                        iOS (iPhone) · Atajo Bancario Automático
-                      </span>
-                      <span
-                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
-                          isIosConnected
-                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                            : 'bg-muted text-muted-foreground border-border'
-                        }`}
-                      >
-                        {isIosConnected ? 'Conectado' : 'Sin conectar'}
-                      </span>
-                    </div>
 
-                    <p className={helpClass}>
-                      Generamos tu Atajo y Enlace Mágico preconfigurados para que
-                      cuando llegue un SMS bancario o pagues con Apple Pay, tu
-                      iPhone lo envíe automáticamente a Raíz sin digitar nada.
-                    </p>
+                {os === 'android' ? (
+                  /* ANDROID ONLY: NotificationListener Card */
+                  <div
+                    data-testid="android-automation-card"
+                    className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                          <ShieldCheck className="h-4 w-4" />
+                          Android · NotificationListener
+                        </span>
+                        <span
+                          className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                            isAndroidConnected
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-muted text-muted-foreground border-border'
+                          }`}
+                        >
+                          {isAndroidConnected ? 'Conectado' : 'Sin conectar'}
+                        </span>
+                      </div>
 
-                    <div className="rounded-lg bg-muted/40 border border-border/60 p-3 space-y-2">
-                      <p className="text-xs font-semibold text-foreground">
-                        Configuración rápida en 2 pasos:
+                      <p className={helpClass}>
+                        Con un solo clic, autoriza a Raíz para leer las alertas de
+                        tus bancos en segundo plano y registrar gastos e ingresos
+                        automáticamente.
                       </p>
-                      <ol className="list-decimal pl-4 space-y-1.5 text-xs text-muted-foreground/90 leading-relaxed">
-                        <li>
-                          Toca{' '}
-                          <strong className="text-foreground">
-                            Generar y Conectar Atajo en iOS
-                          </strong>{' '}
-                          (descarga el atajo y copia tu Enlace Mágico
-                          automáticamente).
-                        </li>
-                        <li>
-                          En la app{' '}
-                          <strong className="text-foreground">
-                            Atajos → Automatización (+) → Mensaje
-                          </strong>{' '}
-                          (que contenga <code>$</code> o <code>Compra</code> con{' '}
-                          <em>&ldquo;Ejecutar inmediatamente&rdquo;</em>), agrega{' '}
-                          <strong className="text-foreground">Abrir URL</strong>,
-                          pega tu Enlace Mágico y adjunta{' '}
-                          <code>Entrada del atajo</code>.
-                        </li>
-                      </ol>
-                    </div>
 
-                    <div className="bg-black/30 p-2.5 rounded-lg border border-border/50 space-y-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                        Tu Enlace Mágico personal (iOS)
-                      </span>
-                      <code className="text-[11px] text-cyan-300 font-mono break-all block">
-                        {buildIosMagicIngestUrl(displayCode)}
-                      </code>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            copyToClipboard(
-                              buildIosMagicIngestUrl(displayCode),
-                              'ios-magic'
-                            )
-                          }
-                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Copy className="h-3.5 w-3.5 text-primary" />
-                          {copiedKey === 'ios-magic'
-                            ? '¡Enlace copiado!'
-                            : 'Copiar enlace'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => downloadIosShortcutFile(displayCode)}
-                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <Download className="h-3.5 w-3.5 text-primary" />
-                          Descargar .shortcut
-                        </button>
-                        <a
-                          href="shortcuts://create-automation"
-                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5 text-primary" />
-                          Abrir app Atajos
-                        </a>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {SUPPORTED_BANK_PACKAGES.map((pkg) => (
+                          <span
+                            key={pkg.packageName}
+                            className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/60"
+                          >
+                            {pkg.name}
+                          </span>
+                        ))}
                       </div>
                     </div>
-                  </div>
 
-                  <div className="space-y-2 pt-2">
-                    <button
-                      type="button"
-                      disabled={connectingIos}
-                      onClick={handleIosConnectClick}
-                      className={`w-full min-h-11 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                        isIosConnected
-                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-primary hover:opacity-90 text-primary-foreground shadow-sm'
-                      }`}
-                    >
-                      {connectingIos ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Preparando atajo iOS...
-                        </>
-                      ) : isIosConnected ? (
-                        <>
-                          <Check className="h-4 w-4" />
-                          Automatización iOS Activa (Desconectar)
-                        </>
-                      ) : (
-                        <>
-                          <Zap className="h-4 w-4" />
-                          Generar y Conectar Atajo en iOS
-                        </>
-                      )}
-                    </button>
-
-                    {isIosConnected && onSimulateBankNotification && (
+                    <div className="space-y-2 pt-2">
                       <button
                         type="button"
-                        disabled={simulatingTx}
-                        onClick={handleSimulateClick}
-                        className="w-full min-h-9 px-3 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        disabled={connectingAndroid}
+                        onClick={handleAndroidConnectClick}
+                        className={`w-full min-h-11 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          isAndroidConnected
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-primary hover:opacity-90 text-primary-foreground shadow-sm'
+                        }`}
                       >
-                        {simulatingTx ? (
+                        {connectingAndroid ? (
                           <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                            Registrando movimiento automático...
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Conectando permiso...
+                          </>
+                        ) : isAndroidConnected ? (
+                          <>
+                            <Check className="h-4 w-4" />
+                            Automatización Android Activa (Desconectar)
                           </>
                         ) : (
                           <>
-                            <Sparkles className="h-3.5 w-3.5 text-primary" />
-                            Simular notificación bancaria en iOS (Prueba automática)
+                            <Zap className="h-4 w-4" />
+                            Conectar Notificaciones en Android
                           </>
                         )}
                       </button>
-                    )}
+
+                      {isAndroidConnected && onSimulateBankNotification && (
+                        <button
+                          type="button"
+                          disabled={simulatingTx}
+                          onClick={handleSimulateClick}
+                          className="w-full min-h-9 px-3 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          {simulatingTx ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                              Registrando movimiento automático...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5 text-primary" />
+                              Simular notificación bancaria (Prueba automática)
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </section>
+                ) : (
+                  /* iOS ONLY: Automatic Shortcut & Magic URL Card */
+                  <div
+                    data-testid="ios-automation-card"
+                    className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                          <Smartphone className="h-4 w-4" />
+                          iOS (iPhone) · Atajo Bancario Automático
+                        </span>
+                        <span
+                          className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                            isIosConnected
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-muted text-muted-foreground border-border'
+                          }`}
+                        >
+                          {isIosConnected ? 'Conectado' : 'Sin conectar'}
+                        </span>
+                      </div>
+
+                      <p className={helpClass}>
+                        Generamos tu Atajo y Enlace Mágico preconfigurados para que
+                        cuando llegue un SMS bancario o pagues con Apple Pay, tu
+                        iPhone lo envíe automáticamente a Raíz sin digitar nada.
+                      </p>
+
+                      <div className="rounded-lg bg-muted/40 border border-border/60 p-3 space-y-2">
+                        <p className="text-xs font-semibold text-foreground">
+                          Configuración rápida en 2 pasos:
+                        </p>
+                        <ol className="list-decimal pl-4 space-y-1.5 text-xs text-muted-foreground/90 leading-relaxed">
+                          <li>
+                            Toca{' '}
+                            <strong className="text-foreground">
+                              Generar y Conectar Atajo en iOS
+                            </strong>{' '}
+                            (descarga el atajo y copia tu Enlace Mágico
+                            automáticamente).
+                          </li>
+                          <li>
+                            En la app{' '}
+                            <strong className="text-foreground">
+                              Atajos → Automatización (+) → Mensaje
+                            </strong>{' '}
+                            (que contenga <code>$</code> o <code>Compra</code> con{' '}
+                            <em>&ldquo;Ejecutar inmediatamente&rdquo;</em>), agrega{' '}
+                            <strong className="text-foreground">Abrir URL</strong>,
+                            pega tu Enlace Mágico y adjunta{' '}
+                            <code>Entrada del atajo</code>.
+                          </li>
+                        </ol>
+                      </div>
+
+                      <div className="bg-black/30 p-2.5 rounded-lg border border-border/50 space-y-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                          Tu Enlace Mágico personal (iOS)
+                        </span>
+                        <code className="text-[11px] text-cyan-300 font-mono break-all block">
+                          {buildIosMagicIngestUrl(displayCode)}
+                        </code>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyToClipboard(
+                                buildIosMagicIngestUrl(displayCode),
+                                'ios-magic'
+                              )
+                            }
+                            className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-primary" />
+                            {copiedKey === 'ios-magic'
+                              ? '¡Enlace copiado!'
+                              : 'Copiar enlace'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => downloadIosShortcutFile(displayCode)}
+                            className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <Download className="h-3.5 w-3.5 text-primary" />
+                            Descargar .shortcut
+                          </button>
+                          <a
+                            href="shortcuts://create-automation"
+                            className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                            Abrir app Atajos
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <button
+                        type="button"
+                        disabled={connectingIos}
+                        onClick={handleIosConnectClick}
+                        className={`w-full min-h-11 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                          isIosConnected
+                            ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-primary hover:opacity-90 text-primary-foreground shadow-sm'
+                        }`}
+                      >
+                        {connectingIos ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Preparando atajo iOS...
+                          </>
+                        ) : isIosConnected ? (
+                          <>
+                            <Check className="h-4 w-4" />
+                            Automatización iOS Activa (Desconectar)
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="h-4 w-4" />
+                            Generar y Conectar Atajo en iOS
+                          </>
+                        )}
+                      </button>
+
+                      {isIosConnected && onSimulateBankNotification && (
+                        <button
+                          type="button"
+                          disabled={simulatingTx}
+                          onClick={handleSimulateClick}
+                          className="w-full min-h-9 px-3 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          {simulatingTx ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                              Registrando movimiento automático...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5 text-primary" />
+                              Simular notificación bancaria en iOS (Prueba automática)
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
 
             {/* Cloud & Space Sharing Blocks */}
             <div className="pt-2 border-t border-border/40">

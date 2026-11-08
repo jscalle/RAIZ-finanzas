@@ -429,24 +429,36 @@ describe('App signed-in + cloud sync', () => {
   });
 
   it('automatically registers an expense when an Android bank notification arrives', async () => {
-    render(<App />);
-    await openSyncSettings();
-
-    const connectBtn = await screen.findByRole('button', {
-      name: /Conectar Notificaciones en Android/i,
+    const originalUA = navigator.userAgent;
+    Object.defineProperty(navigator, 'userAgent', {
+      value: 'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
+      configurable: true,
     });
-    fireEvent.click(connectBtn);
+    try {
+      render(<App />);
+      await openSyncSettings();
 
-    const simulateBtn = await screen.findByRole('button', {
-      name: /Simular notificación bancaria/i,
-    });
-    fireEvent.click(simulateBtn);
+      const connectBtn = await screen.findByRole('button', {
+        name: /Conectar Notificaciones en Android/i,
+      });
+      fireEvent.click(connectBtn);
 
-    await waitFor(() => {
-      expect(
-        screen.queryByText(/Automatización Android Activa/i)
-      ).toBeInTheDocument();
-    });
+      const simulateBtn = await screen.findByRole('button', {
+        name: /Simular notificación bancaria/i,
+      });
+      fireEvent.click(simulateBtn);
+
+      await waitFor(() => {
+        expect(
+          screen.queryByText(/Automatización Android Activa/i)
+        ).toBeInTheDocument();
+      });
+    } finally {
+      Object.defineProperty(navigator, 'userAgent', {
+        value: originalUA,
+        configurable: true,
+      });
+    }
   });
 
   it('toggles global balance privacy from the eye switch in the general header bar', async () => {
