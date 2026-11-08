@@ -53,6 +53,7 @@ import {
 } from "./server/assistantRoute";
 import { createQuota } from "./server/assistantMedia";
 import { createApiCors, parseAllowedOrigins } from "./server/cors";
+import { registerIosShortcutRoutes } from "./server/iosShortcutRoute";
 
 dotenv.config();
 
@@ -682,6 +683,14 @@ async function startServer() {
         { getDb: getAdminFirestore, generate: generateWithGemini, limits: assistantLimits },
         input
       ),
+  });
+
+  // API Route: Background iOS Shortcut webhook ("Obtener contenido de URL").
+  // Creates a PENDING transaction draft in the space without opening the app.
+  registerIosShortcutRoutes(app, {
+    guard: firebaseProjectGuard,
+    rateLimit,
+    deps: { getDb: getAdminFirestore },
   });
 
   // Telegram Bot API webhook. telegramWebhookGuard rejects (401) any update

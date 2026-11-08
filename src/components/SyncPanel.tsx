@@ -556,14 +556,15 @@ export default function SyncPanel({
                       </div>
 
                       <p className={helpClass}>
-                        Generamos tu Atajo y Enlace Mágico preconfigurados para que
-                        cuando llegue un SMS bancario o pagues con Apple Pay, tu
-                        iPhone lo envíe automáticamente a Raíz sin digitar nada.
+                        Generamos tu Enlace Mágico en segundo plano para que cuando
+                        llegue un SMS bancario o pagues con Apple Pay, tu iPhone lo
+                        envíe silenciosamente a Raíz (sin abrir la app) y quede
+                        listo por confirmar.
                       </p>
 
                       <div className="rounded-lg bg-muted/40 border border-border/60 p-3 space-y-2">
                         <p className="text-xs font-semibold text-foreground">
-                          Configuración rápida en 2 pasos:
+                          Configuración en segundo plano (sin abrir la app):
                         </p>
                         <ol className="list-decimal pl-4 space-y-1.5 text-xs text-muted-foreground/90 leading-relaxed">
                           <li>
@@ -575,19 +576,23 @@ export default function SyncPanel({
                             automáticamente.
                           </li>
                           <li>
-                            Toca{' '}
+                            En{' '}
                             <strong className="text-foreground">
-                              Abrir app Atajos
-                            </strong>
-                            , ve a{' '}
-                            <strong className="text-foreground">
-                              Automatización (+) → Mensaje
+                              Atajos → Automatización (+) → Mensaje
                             </strong>{' '}
                             (que contenga <code>$</code> o <code>Compra</code> con{' '}
                             <em>&ldquo;Ejecutar inmediatamente&rdquo;</em>), agrega{' '}
-                            <strong className="text-foreground">Abrir URL</strong>,
-                            pega tu Enlace Mágico y adjunta{' '}
-                            <code>Entrada del atajo</code>.
+                            <strong className="text-foreground">
+                              Obtener contenido de URL
+                            </strong>{' '}
+                            (no uses <em>Abrir URL</em>), pega tu Enlace Mágico,
+                            toca{' '}
+                            <strong className="text-foreground">
+                              Mostrar más (&gt;) → Método: POST → Añadir campo (Texto)
+                            </strong>
+                            : escribe <code>text</code> y en valor elige{' '}
+                            <code>Entrada del atajo</code>{' '}
+                            <em>(tócalo y selecciona Contenido)</em>.
                           </li>
                         </ol>
                       </div>

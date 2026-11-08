@@ -231,26 +231,21 @@ export function buildIosMagicIngestUrl(
   spaceCode?: string,
   origin?: string
 ): string {
-  const baseOrigin =
+  const baseOrigin = (
     origin ||
     (typeof window !== 'undefined' && window.location?.origin
       ? window.location.origin
-      : 'https://raiz.app');
+      : 'https://raiz.app')
+  ).replace(/\/$/, '');
   const cleanCode = (spaceCode || 'ESP-SECURE').trim();
-  return `${baseOrigin}/?ios_space=${encodeURIComponent(cleanCode)}&ios_tx=`;
+  return `${baseOrigin}/api/automation/ios-shortcut?code=${encodeURIComponent(cleanCode)}&text=`;
 }
 
 export function buildIosWebhookApiUrl(
   spaceCode?: string,
   origin?: string
 ): string {
-  const baseOrigin =
-    origin ||
-    (typeof window !== 'undefined' && window.location?.origin
-      ? window.location.origin
-      : 'https://raiz.app');
-  const cleanCode = (spaceCode || 'ESP-SECURE').trim();
-  return `${baseOrigin}/api/automation/ios-shortcut?code=${encodeURIComponent(cleanCode)}&text=`;
+  return buildIosMagicIngestUrl(spaceCode, origin);
 }
 
 export function connectIosShortcutAutomation(
@@ -310,17 +305,28 @@ export function parseBankNotificationFallback(rawText: string): {
   const text = rawText.trim();
   if (!text) return null;
 
-  // Match Colombian peso amounts like $45.000, $1.250.000,00, $ 32,500 or COP 50000
+  // Strip card ending patterns like *4321 or "terminada en 4321" so they are never mistaken for amounts
+  const textWithoutCardDigits = text.replace(
+    /(?:\*+|terminada\s+en\s+|cta\.?\s*\*?|t\.?\s*(?:d[eé]bito|cr[eé]dito)\s*\*?)\s*\d{3,4}\b/gi,
+    ' '
+  );
+
+  // Match Colombian peso amounts like $45.000, $1.250.000,00, COP 50000, "por 48.500", or bare formatted numbers
   const amountMatch =
-    text.match(/\$\s*([\d.]+(?:,\d{1,2})?)/i) ||
-    text.match(/COP\s*([\d.,]+)/i) ||
-    text.match(/por\s+\$?\s*([\d.]+)/i);
+    textWithoutCardDigits.match(/\$\s*([\d.]+(?:,\d{1,2})?)/i) ||
+    textWithoutCardDigits.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+    textWithoutCardDigits.match(/COP\s*([\d.,]+)/i) ||
+    textWithoutCardDigits.match(
+      /(?:por|valor|monto|compra|compraste|pagaste|transferiste|recibiste|abono|retiro)\s+(?:de\s+|por\s+)?\$?\s*([\d.]+(?:,\d{1,2})?|\d{4,9})/i
+    ) ||
+    textWithoutCardDigits.match(/\b(\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?\b/) ||
+    textWithoutCardDigits.match(/\b(\d{4,9})\b/);
 
   if (!amountMatch) return null;
 
   const normalizedDigits = amountMatch[1]
     .replace(/\./g, '')
-    .replace(/,\d+$/, '')
+    .replace(/,\d{1,2}$/, '')
     .replace(/,/g, '');
   const amount = parseInt(normalizedDigits, 10);
   if (!Number.isFinite(amount) || amount <= 0) return null;

@@ -10,6 +10,13 @@
     ],
     "rewrites": [
       {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "finpersonal-api",
+          "region": "us-central1"
+        }
+      },
+      {
         "source": "/guia",
         "destination": "/guia.html"
       },

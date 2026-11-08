@@ -1735,6 +1735,8 @@ export default function App() {
       );
     }
 
+    setPendingTransactions((prev) => prev.filter((item) => item.id !== tx.id));
+
     if (syncEnabled && currentSpaceId) {
       if (
         tx.id.startsWith('tg_') ||
@@ -1929,6 +1931,7 @@ export default function App() {
   const handleDiscardPendingTransaction = (id: string) => {
     const tx = pendingTransactions.find((t) => t.id === id);
     if (!tx) return;
+    setPendingTransactions((prev) => prev.filter((item) => item.id !== id));
     if (syncEnabled && currentSpaceId) {
       if (
         tx.id.startsWith('tg_') ||
@@ -2233,34 +2236,42 @@ export default function App() {
         topics[0];
 
       const topicId = matchedTopic ? matchedTopic.id : 'default';
+      const categoryName = matchedTopic ? matchedTopic.name : 'Otros';
+      const draftId = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const activeSpaceId = currentSpaceId || personalSpaceId;
 
-      if (type === 'INCOME') {
-        handleAddIncome(
-          description,
-          amount,
-          topicId,
-          todayISO,
-          true,
-          'DIGITAL',
-          'SMS_PUSH',
-          'VERIFIED'
-        );
-      } else {
-        handleAddExpense(
-          description,
-          amount,
-          topicId,
-          todayISO,
-          'INGRESOS',
-          true,
-          paymentMethod,
-          'SMS_PUSH',
-          'VERIFIED'
-        );
+      const pendingDraft: PendingTransaction & { topicId?: string } = {
+        id: draftId,
+        spaceId: activeSpaceId || 'local',
+        type,
+        amount,
+        currency: 'COP',
+        description,
+        category: categoryName,
+        topicId,
+        paymentMethod: type === 'INCOME' ? 'DIGITAL' : paymentMethod,
+        date: todayISO,
+        rawText: text,
+        explanation:
+          'Detectado automáticamente de tu notificación bancaria (pendiente por confirmar).',
+        status: 'PENDING',
+        source: 'SMS_WEBHOOK',
+        createdAt: new Date().toISOString(),
+      };
+
+      setPendingTransactions((prev) => [pendingDraft, ...prev]);
+
+      if (syncEnabled && activeSpaceId) {
+        saveSpaceDocument(
+          activeSpaceId,
+          'pending_transactions',
+          draftId,
+          pendingDraft
+        ).catch(reportCloudWriteFailure);
       }
 
       setToast({
-        message: `⚡ Movimiento registrado automáticamente: ${description} ($${amount.toLocaleString('es-CO')})`,
+        message: `📱 Movimiento pendiente por confirmar: ${description} ($${amount.toLocaleString('es-CO')})`,
         type: 'success',
       });
     },
