@@ -104,7 +104,7 @@ describe('SyncPanel Account preferences & OS automation', () => {
     expect(onThemeModeChange).toHaveBeenCalledWith('light');
   });
 
-  it('shows active Android NotificationListener card and locked iOS card', async () => {
+  it('renders only Android NotificationListener card when OS is Android (hiding iOS)', async () => {
     const onToggleAndroidAuto = vi.fn();
     renderSignedIn({
       androidAutoEnabled: false,
@@ -113,6 +113,9 @@ describe('SyncPanel Account preferences & OS automation', () => {
     });
 
     expect(screen.getByText(/Android detectado/i)).toBeInTheDocument();
+    expect(screen.getByTestId('android-automation-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('ios-automation-card')).toBeNull();
+
     const androidBtn = screen.getByRole('button', {
       name: /Conectar Notificaciones en Android/i,
     });
@@ -120,12 +123,25 @@ describe('SyncPanel Account preferences & OS automation', () => {
     await waitFor(() =>
       expect(onToggleAndroidAuto).toHaveBeenCalledWith(true)
     );
+  });
 
-    const iosCard = screen.getByTestId('ios-automation-locked');
-    expect(iosCard).toHaveAttribute('aria-disabled', 'true');
-    expect(
-      screen.getByRole('button', { name: /Próximamente en iOS/i })
-    ).toBeDisabled();
+  it('renders only iOS Shortcut automation card when OS is iOS (hiding Android) and connects Shortcut', async () => {
+    const onToggleIosAuto = vi.fn();
+    renderSignedIn({
+      iosAutoEnabled: false,
+      onToggleIosAuto,
+      detectedOS: 'ios',
+    });
+
+    expect(screen.getByText(/iOS detectado/i)).toBeInTheDocument();
+    expect(screen.getByTestId('ios-automation-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('android-automation-card')).toBeNull();
+
+    const iosBtn = screen.getByRole('button', {
+      name: /Generar y Conectar Atajo en iOS/i,
+    });
+    fireEvent.click(iosBtn);
+    await waitFor(() => expect(onToggleIosAuto).toHaveBeenCalledWith(true));
   });
 });
 

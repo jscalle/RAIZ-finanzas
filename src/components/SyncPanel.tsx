@@ -5,8 +5,8 @@ import {
   ChevronDown,
   CloudLightning,
   Copy,
-  Eye,
-  EyeOff,
+  Download,
+  ExternalLink,
   Loader2,
   Lock,
   Monitor,
@@ -31,6 +31,11 @@ import {
   isAndroidNotificationEnabledInStorage,
   connectAndroidNotificationListener,
   disconnectAndroidNotificationListener,
+  isIosShortcutEnabledInStorage,
+  connectIosShortcutAutomation,
+  disconnectIosShortcutAutomation,
+  buildIosMagicIngestUrl,
+  downloadIosShortcutFile,
   SUPPORTED_BANK_PACKAGES,
   type DeviceOS,
 } from '../lib/notificationAutomation';
@@ -64,10 +69,10 @@ interface SyncPanelProps {
   onRevokeMember?: (memberUid: string, emailOrName: string) => Promise<void>;
   themeMode?: ThemeMode;
   onThemeModeChange?: (mode: ThemeMode) => void;
-  privacyMode?: 'real' | 'masked' | 'scaled';
-  onPrivacyModeChange?: (mode: 'real' | 'masked' | 'scaled') => void;
   androidAutoEnabled?: boolean;
   onToggleAndroidAuto?: (enabled: boolean) => Promise<void> | void;
+  iosAutoEnabled?: boolean;
+  onToggleIosAuto?: (enabled: boolean) => Promise<void> | void;
   onSimulateBankNotification?: (sampleText?: string) => Promise<void> | void;
   detectedOS?: DeviceOS;
 }
@@ -92,10 +97,10 @@ export default function SyncPanel({
   onRevokeMember,
   themeMode = 'system',
   onThemeModeChange,
-  privacyMode = 'real',
-  onPrivacyModeChange,
   androidAutoEnabled,
   onToggleAndroidAuto,
+  iosAutoEnabled,
+  onToggleIosAuto,
   onSimulateBankNotification,
   detectedOS,
 }: SyncPanelProps) {
@@ -110,15 +115,26 @@ export default function SyncPanel({
   const [localAndroidEnabled, setLocalAndroidEnabled] = useState<boolean>(() =>
     isAndroidNotificationEnabledInStorage()
   );
+  const [localIosEnabled, setLocalIosEnabled] = useState<boolean>(() =>
+    isIosShortcutEnabledInStorage()
+  );
   const [connectingAndroid, setConnectingAndroid] = useState(false);
+  const [connectingIos, setConnectingIos] = useState(false);
   const [simulatingTx, setSimulatingTx] = useState(false);
+  const [selectedWebOS, setSelectedWebOS] = useState<'android' | 'ios'>(
+    'android'
+  );
 
   const activeTheme = onThemeModeChange ? themeMode : localTheme;
   const isAndroidConnected =
     typeof androidAutoEnabled === 'boolean'
       ? androidAutoEnabled
       : localAndroidEnabled;
+  const isIosConnected =
+    typeof iosAutoEnabled === 'boolean' ? iosAutoEnabled : localIosEnabled;
   const os = detectedOS ?? detectDeviceOS();
+  const activeMobileOS: 'android' | 'ios' =
+    os === 'android' ? 'android' : os === 'ios' ? 'ios' : selectedWebOS;
 
   const handleThemeSelect = (mode: ThemeMode) => {
     if (onThemeModeChange) {
@@ -149,6 +165,27 @@ export default function SyncPanel({
       }
     } finally {
       setConnectingAndroid(false);
+    }
+  };
+
+  const handleIosConnectClick = async () => {
+    setConnectingIos(true);
+    try {
+      const nextState = !isIosConnected;
+      if (nextState) {
+        const { magicUrl } = connectIosShortcutAutomation(displayCode);
+        await copyToClipboard(magicUrl, 'ios-magic');
+        downloadIosShortcutFile(displayCode);
+        setLocalIosEnabled(true);
+      } else {
+        disconnectIosShortcutAutomation();
+        setLocalIosEnabled(false);
+      }
+      if (onToggleIosAuto) {
+        await onToggleIosAuto(nextState);
+      }
+    } finally {
+      setConnectingIos(false);
     }
   };
 
@@ -337,99 +374,54 @@ export default function SyncPanel({
               </div>
             )}
 
-            {/* Preferences: Theme Mode (Dark / Light / System) & Privacy */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
-              <section
-                className={blockClass}
-                aria-labelledby="account-appearance"
+            {/* Preferences: Theme Mode (Dark / Light / System) */}
+            <section
+              className={blockClass}
+              aria-labelledby="account-appearance"
+            >
+              <h3 id="account-appearance" className={blockTitleClass}>
+                <Sun className="h-4 w-4 text-primary shrink-0" />
+                Apariencia de la App
+              </h3>
+              <p className={helpClass}>
+                Elige entre modo claro, modo oscuro o sincronizar con tu sistema
+                operativo.
+              </p>
+              <div
+                role="group"
+                aria-label="Modo de tema"
+                className="grid grid-cols-3 gap-2 pt-1 max-w-md"
               >
-                <h3 id="account-appearance" className={blockTitleClass}>
-                  <Sun className="h-4 w-4 text-primary shrink-0" />
-                  Apariencia de la App
-                </h3>
-                <p className={helpClass}>
-                  Elige entre modo claro, modo oscuro o sincronizar con tu
-                  sistema operativo.
-                </p>
-                <div
-                  role="group"
-                  aria-label="Modo de tema"
-                  className="grid grid-cols-3 gap-2 pt-1"
-                >
-                  {(
-                    [
-                      { id: 'light', label: 'Claro', icon: Sun },
-                      { id: 'dark', label: 'Oscuro', icon: Moon },
-                      { id: 'system', label: 'Sistema', icon: Monitor },
-                    ] as const
-                  ).map((item) => {
-                    const Icon = item.icon;
-                    const selected = activeTheme === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        aria-pressed={selected}
-                        onClick={() => handleThemeSelect(item.id)}
-                        className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                          selected
-                            ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                            : 'bg-card text-muted-foreground border-border/60 hover:bg-muted'
-                        }`}
-                      >
-                        <Icon className="h-3.5 w-3.5 shrink-0" />
-                        {item.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
+                {(
+                  [
+                    { id: 'light', label: 'Claro', icon: Sun },
+                    { id: 'dark', label: 'Oscuro', icon: Moon },
+                    { id: 'system', label: 'Sistema', icon: Monitor },
+                  ] as const
+                ).map((item) => {
+                  const Icon = item.icon;
+                  const selected = activeTheme === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => handleThemeSelect(item.id)}
+                      className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        selected
+                          ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                          : 'bg-card text-muted-foreground border-border/60 hover:bg-muted'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
 
-              <section className={blockClass} aria-labelledby="account-privacy">
-                <h3 id="account-privacy" className={blockTitleClass}>
-                  {privacyMode === 'masked' ? (
-                    <EyeOff className="h-4 w-4 text-primary shrink-0" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-primary shrink-0" />
-                  )}
-                  Privacidad de Saldos
-                </h3>
-                <p className={helpClass}>
-                  Oculta tus cifras con asteriscos cuando estés en lugares
-                  públicos.
-                </p>
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    aria-pressed={privacyMode === 'real'}
-                    onClick={() => onPrivacyModeChange?.('real')}
-                    className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      privacyMode === 'real'
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-card text-muted-foreground border-border/60 hover:bg-muted'
-                    }`}
-                  >
-                    <Eye className="h-3.5 w-3.5 shrink-0" />
-                    Mostrar montos
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={privacyMode === 'masked'}
-                    onClick={() => onPrivacyModeChange?.('masked')}
-                    className={`min-h-10 px-3 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      privacyMode === 'masked'
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-card text-muted-foreground border-border/60 hover:bg-muted'
-                    }`}
-                  >
-                    <EyeOff className="h-3.5 w-3.5 shrink-0" />
-                    Ocultar ($ ••••)
-                  </button>
-                </div>
-              </section>
-            </div>
-
-            {/* OS Banking Automation Section */}
+            {/* OS Banking Automation Section (Strictly conditional by OS) */}
             <section
               className="rounded-xl border border-primary/30 bg-primary/5 p-4 sm:p-5 space-y-4"
               aria-labelledby="account-automation"
@@ -448,19 +440,52 @@ export default function SyncPanel({
                     bancarias e insértalos automáticamente sin digitar nada.
                   </p>
                 </div>
-                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-primary/15 text-primary border border-primary/30 self-start sm:self-center shrink-0">
-                  <Smartphone className="h-3.5 w-3.5" />
-                  {os === 'android'
-                    ? 'Android detectado'
-                    : os === 'ios'
-                      ? 'iOS detectado'
-                      : 'Modo Multiplataforma'}
-                </span>
+
+                {os === 'web' ? (
+                  <div
+                    role="group"
+                    aria-label="Sistema operativo móvil"
+                    className="inline-flex items-center rounded-xl border border-border bg-card p-1 self-start sm:self-center shrink-0"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={activeMobileOS === 'android'}
+                      onClick={() => setSelectedWebOS('android')}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activeMobileOS === 'android'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Android
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={activeMobileOS === 'ios'}
+                      onClick={() => setSelectedWebOS('ios')}
+                      className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activeMobileOS === 'ios'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      iOS (iPhone)
+                    </button>
+                  </div>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-primary/15 text-primary border border-primary/30 self-start sm:self-center shrink-0">
+                    <Smartphone className="h-3.5 w-3.5" />
+                    {os === 'android' ? 'Android detectado' : 'iOS detectado'}
+                  </span>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
-                {/* ANDROID: NotificationListener Card */}
-                <div className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4">
+              {activeMobileOS === 'android' ? (
+                /* ANDROID ONLY: NotificationListener Card */
+                <div
+                  data-testid="android-automation-card"
+                  className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
+                >
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
@@ -547,42 +572,156 @@ export default function SyncPanel({
                     )}
                   </div>
                 </div>
-
-                {/* iOS: Locked / Disabled Card */}
+              ) : (
+                /* iOS ONLY: Automatic Shortcut & Magic URL Card */
                 <div
-                  aria-disabled="true"
-                  data-testid="ios-automation-locked"
-                  className="rounded-xl border border-border/60 bg-muted/20 p-4 flex flex-col justify-between space-y-4 opacity-75 select-none"
+                  data-testid="ios-automation-card"
+                  className="rounded-xl border border-border bg-card p-4 flex flex-col justify-between space-y-4"
                 >
-                  <div className="space-y-2.5">
+                  <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <Lock className="h-4 w-4 text-amber-400" />
-                        iOS (iPhone) · Automatización
+                      <span className="text-xs font-bold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                        <Smartphone className="h-4 w-4" />
+                        iOS (iPhone) · Atajo Bancario Automático
                       </span>
-                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                        <Lock className="h-3 w-3" />
-                        Bloqueado
+                      <span
+                        className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                          isIosConnected
+                            ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                            : 'bg-muted text-muted-foreground border-border'
+                        }`}
+                      >
+                        {isIosConnected ? 'Conectado' : 'Sin conectar'}
                       </span>
                     </div>
 
                     <p className={helpClass}>
-                      En iOS el acceso directo a notificaciones del sistema está
-                      restringido por Apple. Estamos preparando la integración
-                      automática mediante Atajos de iOS y buzón inteligente.
+                      Generamos tu Atajo y Enlace Mágico preconfigurados para que
+                      cuando llegue un SMS bancario o pagues con Apple Pay, tu
+                      iPhone lo envíe automáticamente a Raíz sin digitar nada.
                     </p>
+
+                    <div className="rounded-lg bg-muted/40 border border-border/60 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-foreground">
+                        Configuración rápida en 2 pasos:
+                      </p>
+                      <ol className="list-decimal pl-4 space-y-1.5 text-xs text-muted-foreground/90 leading-relaxed">
+                        <li>
+                          Toca{' '}
+                          <strong className="text-foreground">
+                            Generar y Conectar Atajo en iOS
+                          </strong>{' '}
+                          (descarga el atajo y copia tu Enlace Mágico
+                          automáticamente).
+                        </li>
+                        <li>
+                          En la app{' '}
+                          <strong className="text-foreground">
+                            Atajos → Automatización (+) → Mensaje
+                          </strong>{' '}
+                          (que contenga <code>$</code> o <code>Compra</code> con{' '}
+                          <em>&ldquo;Ejecutar inmediatamente&rdquo;</em>), agrega{' '}
+                          <strong className="text-foreground">Abrir URL</strong>,
+                          pega tu Enlace Mágico y adjunta{' '}
+                          <code>Entrada del atajo</code>.
+                        </li>
+                      </ol>
+                    </div>
+
+                    <div className="bg-black/30 p-2.5 rounded-lg border border-border/50 space-y-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                        Tu Enlace Mágico personal (iOS)
+                      </span>
+                      <code className="text-[11px] text-cyan-300 font-mono break-all block">
+                        {buildIosMagicIngestUrl(displayCode)}
+                      </code>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            copyToClipboard(
+                              buildIosMagicIngestUrl(displayCode),
+                              'ios-magic'
+                            )
+                          }
+                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Copy className="h-3.5 w-3.5 text-primary" />
+                          {copiedKey === 'ios-magic'
+                            ? '¡Enlace copiado!'
+                            : 'Copiar enlace'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadIosShortcutFile(displayCode)}
+                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Download className="h-3.5 w-3.5 text-primary" />
+                          Descargar .shortcut
+                        </button>
+                        <a
+                          href="shortcuts://create-automation"
+                          className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                          Abrir app Atajos
+                        </a>
+                      </div>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled
-                    className="w-full min-h-11 px-4 py-2.5 rounded-xl bg-muted text-muted-foreground border border-border/60 text-xs font-bold flex items-center justify-center gap-2 cursor-not-allowed"
-                  >
-                    <Lock className="h-4 w-4" />
-                    Próximamente en iOS
-                  </button>
+                  <div className="space-y-2 pt-2">
+                    <button
+                      type="button"
+                      disabled={connectingIos}
+                      onClick={handleIosConnectClick}
+                      className={`w-full min-h-11 px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                        isIosConnected
+                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-primary hover:opacity-90 text-primary-foreground shadow-sm'
+                      }`}
+                    >
+                      {connectingIos ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Preparando atajo iOS...
+                        </>
+                      ) : isIosConnected ? (
+                        <>
+                          <Check className="h-4 w-4" />
+                          Automatización iOS Activa (Desconectar)
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="h-4 w-4" />
+                          Generar y Conectar Atajo en iOS
+                        </>
+                      )}
+                    </button>
+
+                    {isIosConnected && onSimulateBankNotification && (
+                      <button
+                        type="button"
+                        disabled={simulatingTx}
+                        onClick={handleSimulateClick}
+                        className="w-full min-h-9 px-3 py-1.5 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border text-[11px] font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {simulatingTx ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                            Registrando movimiento automático...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5 text-primary" />
+                            Simular notificación bancaria en iOS (Prueba automática)
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </section>
 
             {/* Cloud & Space Sharing Blocks */}

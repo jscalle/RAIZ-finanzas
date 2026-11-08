@@ -449,6 +449,38 @@ describe('App signed-in + cloud sync', () => {
     });
   });
 
+  it('toggles global balance privacy from the eye switch in the general header bar', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('$4.321').length).toBeGreaterThan(0);
+    });
+
+    const eyeSwitch = screen.getByTestId('privacy-toggle-desktop');
+    expect(eyeSwitch).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(eyeSwitch);
+
+    expect(eyeSwitch).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByText('$ ••••••').length).toBeGreaterThan(0);
+  });
+
+  it('automatically ingests a bank movement passed via the iOS Shortcut Magic URL (?ios_tx=...)', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/?ios_space=ESP-TEST0000&ios_tx=' +
+        encodeURIComponent(
+          'Bancolombia le informa Compra por $35.000 en JUAN VALDEZ con T.Debito'
+        )
+    );
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.search).toBe('');
+    });
+  });
+
   it('does not offer Gmail Sync in the sidebar nor in the mobile more menu', async () => {
     render(<App />);
 

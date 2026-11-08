@@ -8,6 +8,8 @@ import {
   Cloud,
   CloudLightning,
   CloudOff,
+  Eye,
+  EyeOff,
   LayoutDashboard,
   Loader2,
   Lock,
@@ -148,6 +150,9 @@ import {
   connectAndroidNotificationListener,
   disconnectAndroidNotificationListener,
   isAndroidNotificationEnabledInStorage,
+  connectIosShortcutAutomation,
+  disconnectIosShortcutAutomation,
+  isIosShortcutEnabledInStorage,
   parseBankNotificationFallback,
   subscribeToAndroidBankNotifications,
 } from './lib/notificationAutomation';
@@ -183,6 +188,10 @@ export default function App() {
 
   const [androidAutoEnabled, setAndroidAutoEnabled] = useState<boolean>(() =>
     isAndroidNotificationEnabledInStorage()
+  );
+
+  const [iosAutoEnabled, setIosAutoEnabled] = useState<boolean>(() =>
+    isIosShortcutEnabledInStorage()
   );
 
   const [privacyMode, setPrivacyMode] = useState<'real' | 'masked' | 'scaled'>(
@@ -2278,14 +2287,56 @@ export default function App() {
     }
   }, []);
 
+  const handleToggleIosAuto = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        connectIosShortcutAutomation(spaceInfo?.code);
+        setIosAutoEnabled(true);
+        setToast({
+          message:
+            '¡Atajo de iOS generado y Enlace Mágico copiado! Tus movimientos de iPhone se registrarán automáticamente.',
+          type: 'success',
+        });
+      } else {
+        disconnectIosShortcutAutomation();
+        setIosAutoEnabled(false);
+        setToast({
+          message: 'Automatización de Atajos en iOS desactivada.',
+          type: 'info',
+        });
+      }
+    },
+    [spaceInfo?.code]
+  );
+
   useEffect(() => {
-    if (!androidAutoEnabled) return;
+    if (!androidAutoEnabled && !iosAutoEnabled) return;
     const unsub = subscribeToAndroidBankNotifications((event) => {
       const fullText = `${event.title || ''} ${event.text || ''}`.trim();
       void handleAutoIngestBankNotification(fullText);
     });
     return () => unsub();
-  }, [androidAutoEnabled, handleAutoIngestBankNotification]);
+  }, [
+    androidAutoEnabled,
+    iosAutoEnabled,
+    handleAutoIngestBankNotification,
+  ]);
+
+  // Automatically ingest bank notifications passed via iOS Shortcut Magic URL (?ios_tx=...)
+  useEffect(() => {
+    if (typeof window === 'undefined' || isAuthLoading || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    const iosTx = params.get('ios_tx');
+    if (!iosTx || !iosTx.trim()) return;
+
+    params.delete('ios_tx');
+    params.delete('ios_space');
+    const cleanQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash || ''}`;
+    window.history.replaceState({}, '', nextUrl);
+
+    void handleAutoIngestBankNotification(iosTx);
+  }, [isAuthLoading, user, handleAutoIngestBankNotification]);
 
   // Auto-sync Gmail bank alerts when connected to a Cloud Space, plus the manual
   // "refresh all data" handler. Extracted into useGmailSync; called here so the
@@ -2528,13 +2579,40 @@ export default function App() {
             />
             <h1 className="text-lg font-bold text-foreground">Raíz</h1>
           </div>
-          <button
-            onClick={handleRefreshAllData}
-            title="Refrescar datos"
-            className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() =>
+                setPrivacyMode(privacyMode === 'masked' ? 'real' : 'masked')
+              }
+              aria-pressed={privacyMode === 'masked'}
+              aria-label={
+                privacyMode === 'masked' ? 'Mostrar saldos' : 'Ocultar saldos'
+              }
+              title={
+                privacyMode === 'masked' ? 'Mostrar saldos' : 'Ocultar saldos'
+              }
+              data-testid="privacy-toggle-mobile"
+              className={`p-2 rounded-full transition-colors cursor-pointer ${
+                privacyMode === 'masked'
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              {privacyMode === 'masked' ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+            <button
+              onClick={handleRefreshAllData}
+              title="Refrescar datos"
+              className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors cursor-pointer"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2865,6 +2943,31 @@ export default function App() {
                 {activeMonth === 'all' ? 'Volver al Mes' : 'Ver Todo'}
               </button>
               <button
+                type="button"
+                onClick={() =>
+                  setPrivacyMode(privacyMode === 'masked' ? 'real' : 'masked')
+                }
+                aria-pressed={privacyMode === 'masked'}
+                aria-label={
+                  privacyMode === 'masked' ? 'Mostrar saldos' : 'Ocultar saldos'
+                }
+                title={
+                  privacyMode === 'masked' ? 'Mostrar saldos' : 'Ocultar saldos'
+                }
+                data-testid="privacy-toggle-desktop"
+                className={`hidden md:flex p-2 rounded-full transition-colors border cursor-pointer ${
+                  privacyMode === 'masked'
+                    ? 'bg-primary/15 text-primary border-primary/30'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground border-transparent hover:border-border'
+                }`}
+              >
+                {privacyMode === 'masked' ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+              <button
                 onClick={handleRefreshAllData}
                 className="hidden md:flex p-2 text-muted-foreground hover:bg-muted hover:text-foreground rounded-full transition-colors border border-transparent hover:border-border cursor-pointer"
                 title="Refrescar datos"
@@ -2993,10 +3096,10 @@ export default function App() {
                     onRevokeMember={handleRevokeMember}
                     themeMode={themeMode}
                     onThemeModeChange={setThemeMode}
-                    privacyMode={privacyMode}
-                    onPrivacyModeChange={setPrivacyMode}
                     androidAutoEnabled={androidAutoEnabled}
                     onToggleAndroidAuto={handleToggleAndroidAuto}
+                    iosAutoEnabled={iosAutoEnabled}
+                    onToggleIosAuto={handleToggleIosAuto}
                     onSimulateBankNotification={handleAutoIngestBankNotification}
                   />
                 )}
