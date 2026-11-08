@@ -5,7 +5,6 @@ import {
   ChevronDown,
   CloudLightning,
   Copy,
-  Download,
   ExternalLink,
   Loader2,
   Lock,
@@ -35,7 +34,6 @@ import {
   connectIosShortcutAutomation,
   disconnectIosShortcutAutomation,
   buildIosMagicIngestUrl,
-  downloadIosShortcutFile,
   SUPPORTED_BANK_PACKAGES,
   type DeviceOS,
 } from '../lib/notificationAutomation';
@@ -170,7 +168,6 @@ export default function SyncPanel({
       if (nextState) {
         const { magicUrl } = connectIosShortcutAutomation(displayCode);
         await copyToClipboard(magicUrl, 'ios-magic');
-        downloadIosShortcutFile(displayCode);
         setLocalIosEnabled(true);
       } else {
         disconnectIosShortcutAutomation();
@@ -574,13 +571,17 @@ export default function SyncPanel({
                             <strong className="text-foreground">
                               Generar y Conectar Atajo en iOS
                             </strong>{' '}
-                            (descarga el atajo y copia tu Enlace Mágico
-                            automáticamente).
+                            para activar la conexión y copiar tu Enlace Mágico
+                            automáticamente.
                           </li>
                           <li>
-                            En la app{' '}
+                            Toca{' '}
                             <strong className="text-foreground">
-                              Atajos → Automatización (+) → Mensaje
+                              Abrir app Atajos
+                            </strong>
+                            , ve a{' '}
+                            <strong className="text-foreground">
+                              Automatización (+) → Mensaje
                             </strong>{' '}
                             (que contenga <code>$</code> o <code>Compra</code> con{' '}
                             <em>&ldquo;Ejecutar inmediatamente&rdquo;</em>), agrega{' '}
@@ -598,7 +599,7 @@ export default function SyncPanel({
                         <code className="text-[11px] text-cyan-300 font-mono break-all block">
                           {buildIosMagicIngestUrl(displayCode)}
                         </code>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                           <button
                             type="button"
                             onClick={() =>
@@ -614,16 +615,8 @@ export default function SyncPanel({
                               ? '¡Enlace copiado!'
                               : 'Copiar enlace'}
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => downloadIosShortcutFile(displayCode)}
-                            className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Download className="h-3.5 w-3.5 text-primary" />
-                            Descargar .shortcut
-                          </button>
                           <a
-                            href="shortcuts://create-automation"
+                            href="shortcuts://"
                             className="min-h-9 px-3 py-1.5 bg-muted hover:bg-muted/80 text-foreground border border-border rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer"
                           >
                             <ExternalLink className="h-3.5 w-3.5 text-primary" />

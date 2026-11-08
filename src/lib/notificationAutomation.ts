@@ -253,85 +253,6 @@ export function buildIosWebhookApiUrl(
   return `${baseOrigin}/api/automation/ios-shortcut?code=${encodeURIComponent(cleanCode)}&text=`;
 }
 
-/**
- * Generates an Apple Shortcuts (.shortcut XML plist) definition pre-configured with
- * the user's space URL so the user can download and import the Shortcut with one tap.
- */
-export function buildIosShortcutPlist(
-  spaceCode?: string,
-  origin?: string
-): string {
-  const magicUrl = buildIosMagicIngestUrl(spaceCode, origin).replace(
-    /&/g,
-    '&amp;'
-  );
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>WFWorkflowClientVersion</key>
-  <string>2605.0.5</string>
-  <key>WFWorkflowMinimumClientVersion</key>
-  <integer>900</integer>
-  <key>WFWorkflowIcon</key>
-  <dict>
-    <key>WFWorkflowIconStartColor</key>
-    <integer>463140863</integer>
-    <key>WFWorkflowIconGlyphNumber</key>
-    <integer>59771</integer>
-  </dict>
-  <key>WFWorkflowInputContentItemClasses</key>
-  <array>
-    <string>WFStringContentItem</string>
-  </array>
-  <key>WFWorkflowActions</key>
-  <array>
-    <dict>
-      <key>WFWorkflowActionIdentifier</key>
-      <string>is.workflow.actions.urlencode</string>
-      <key>WFWorkflowActionParameters</key>
-      <dict>
-        <key>WFEncodeMode</key>
-        <string>Encode</string>
-      </dict>
-    </dict>
-    <dict>
-      <key>WFWorkflowActionIdentifier</key>
-      <string>is.workflow.actions.openurl</string>
-      <key>WFWorkflowActionParameters</key>
-      <dict>
-        <key>WFInput</key>
-        <string>${magicUrl}</string>
-      </dict>
-    </dict>
-  </array>
-</dict>
-</plist>`;
-}
-
-export function downloadIosShortcutFile(
-  spaceCode?: string,
-  origin?: string
-): void {
-  if (typeof document === 'undefined' || typeof Blob === 'undefined') return;
-  const plist = buildIosShortcutPlist(spaceCode, origin);
-  const blob = new Blob([plist], { type: 'application/x-apple-aspen-config' });
-  const url =
-    typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
-      ? URL.createObjectURL(blob)
-      : '';
-  if (!url) return;
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'Raiz-Bancos-iOS.shortcut';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  if (typeof URL.revokeObjectURL === 'function') {
-    URL.revokeObjectURL(url);
-  }
-}
-
 export function connectIosShortcutAutomation(
   spaceCode?: string,
   origin?: string
@@ -346,7 +267,7 @@ export function connectIosShortcutAutomation(
     connected: true,
     magicUrl: buildIosMagicIngestUrl(spaceCode, origin),
     webhookApiUrl: buildIosWebhookApiUrl(spaceCode, origin),
-    shortcutDeepLink: 'shortcuts://create-automation',
+    shortcutDeepLink: 'shortcuts://',
   };
 }
 
