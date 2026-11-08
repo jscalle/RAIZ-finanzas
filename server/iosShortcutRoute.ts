@@ -25,11 +25,29 @@ function defaultRandomId(): string {
 }
 
 /**
+ * Strips multipart/form-data boundaries and headers if the raw body came from an iOS Form POST.
+ */
+function cleanMultipartText(raw: string): string {
+  if (!raw.includes('Content-Disposition:') && !raw.startsWith('--')) {
+    return raw.trim();
+  }
+  const lines = raw.split(/\r?\n/);
+  const contentLines = lines.filter((line) => {
+    const t = line.trim();
+    if (!t) return false;
+    if (t.startsWith('--')) return false;
+    if (/^content-(disposition|type|transfer-encoding):/i.test(t)) return false;
+    return true;
+  });
+  return contentLines.join(' ').trim();
+}
+
+/**
  * Recursively collects string values from a parsed body object, ignoring space code keys.
  */
 function collectBodyStrings(value: unknown, ignoredUpperCode: string): string[] {
   if (typeof value === 'string') {
-    const trimmed = value.trim();
+    const trimmed = cleanMultipartText(value);
     if (!trimmed || trimmed.toUpperCase() === ignoredUpperCode) return [];
     return [trimmed];
   }
@@ -201,7 +219,25 @@ export async function handleIosShortcutNotification(
   }
 
   const db = deps.getDb();
-  const space = await findSpaceByCodeOrId(db, cleanCode);
+  let space = await findSpaceByCodeOrId(db, cleanCode);
+  if (
+    !space &&
+    (cleanCode.toUpperCase() === 'ESP-SECURE' ||
+      cleanCode.toUpperCase() === 'ESP-LOCAL')
+  ) {
+    try {
+      const snap = await db.collection('spaces').limit(5).get();
+      if (!snap.empty) {
+        const preferred =
+          snap.docs.find((d) => !d.id.startsWith('espacio_u_')) || snap.docs[0];
+        if (preferred) {
+          space = { id: preferred.id, ...(preferred.data() as Record<string, unknown>) };
+        }
+      }
+    } catch (e) {
+      console.warn('[ios-shortcut] Fallback space lookup failed:', e);
+    }
+  }
   if (!space) {
     return {
       httpStatus: 404,
@@ -287,7 +323,10 @@ export function registerIosShortcutRoutes(
 ): void {
   const parsers = [
     express.urlencoded({ extended: true, limit: '256kb' }),
-    express.text({ type: ['text/*', 'application/octet-stream'], limit: '256kb' }),
+    express.text({
+      type: ['text/*', 'multipart/form-data', 'application/octet-stream'],
+      limit: '256kb',
+    }),
   ];
 
   app.all(
@@ -302,6 +341,9 @@ export function registerIosShortcutRoutes(
           body: req.body,
           originalUrl: req.originalUrl,
         });
+        console.log(
+          `[ios-shortcut] method=${req.method} code=${extracted.code} textLen=${extracted.text.length}`
+        );
         const result = await handleIosShortcutNotification(
           wiring.deps,
           extracted

@@ -63,6 +63,21 @@ function createFakeDb(initial: Record<string, Data>) {
         },
       }),
     }),
+    limit: (n: number) => ({
+      get: async () => {
+        const docs = [...store.entries()]
+          .filter(([key]) => {
+            const rest = key.slice(path.length + 1);
+            return key.startsWith(`${path}/`) && !rest.includes('/');
+          })
+          .slice(0, n)
+          .map(([key, data]) => ({
+            id: key.slice(path.length + 1),
+            data: () => ({ ...data }),
+          }));
+        return { empty: docs.length === 0, docs };
+      },
+    }),
   });
   return {
     db: { collection: collectionRef } as unknown as Firestore,
@@ -160,5 +175,32 @@ describe('iOS Shortcut background webhook (/api/automation/ios-shortcut)', () =>
     expect(res.httpStatus).toBe(422);
     expect(res.body.error).toBe('no_valid_amount');
     expect(writes).toHaveLength(0);
+  });
+
+  it('resolves placeholder code ESP-SECURE to the primary space and parses multipart form bodies', async () => {
+    const { db, writes } = createFakeDb({
+      'spaces/espacio_principal': {
+        name: 'Personal',
+        code: 'ESP-3GF5A9',
+        ownerUid: 'u_1',
+        members: ['u_1'],
+      },
+    });
+
+    const extracted = extractIosShortcutInput({
+      query: { code: 'ESP-SECURE' },
+      body: '--Boundary-123\r\nContent-Disposition: form-data; name="text"\r\n\r\nBancolombia le informa Compra por $48.500 en CREPES Y WAFFLES con T.Debito *4321\r\n--Boundary-123--',
+    });
+
+    const res = await handleIosShortcutNotification(
+      { getDb: () => db, now: () => new Date('2026-11-08T20:00:00.000Z'), newId: () => 'sec1' },
+      extracted
+    );
+
+    expect(res.httpStatus).toBe(200);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].path).toBe(
+      'spaces/espacio_principal/pending_transactions/ios_1794168000000_sec1'
+    );
   });
 });

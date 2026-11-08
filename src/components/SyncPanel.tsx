@@ -161,12 +161,18 @@ export default function SyncPanel({
     }
   };
 
+  const effectiveSpaceId = currentSpaceId
+    ? normalizeSpaceId(currentSpaceId)
+    : personalSpaceId;
+  const displayCode = spaceInfo?.code || 'ESP-SECURE';
+  const iosSpaceToken = spaceInfo?.code || effectiveSpaceId || 'ESP-SECURE';
+
   const handleIosConnectClick = async () => {
     setConnectingIos(true);
     try {
       const nextState = !isIosConnected;
       if (nextState) {
-        const { magicUrl } = connectIosShortcutAutomation(displayCode);
+        const { magicUrl } = connectIosShortcutAutomation(iosSpaceToken);
         await copyToClipboard(magicUrl, 'ios-magic');
         setLocalIosEnabled(true);
       } else {
@@ -207,11 +213,6 @@ export default function SyncPanel({
       setIsJoining(false);
     }
   };
-
-  const effectiveSpaceId = currentSpaceId
-    ? normalizeSpaceId(currentSpaceId)
-    : personalSpaceId;
-  const displayCode = spaceInfo?.code || 'ESP-SECURE';
 
   // True when the active space is someone else's (not the user's own default).
   const myPersonalSpaceId = user ? personalSpaceId : '';
@@ -602,14 +603,14 @@ export default function SyncPanel({
                           Tu Enlace Mágico personal (iOS)
                         </span>
                         <code className="text-[11px] text-cyan-300 font-mono break-all block">
-                          {buildIosMagicIngestUrl(displayCode)}
+                          {buildIosMagicIngestUrl(iosSpaceToken)}
                         </code>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                           <button
                             type="button"
                             onClick={() =>
                               copyToClipboard(
-                                buildIosMagicIngestUrl(displayCode),
+                                buildIosMagicIngestUrl(iosSpaceToken),
                                 'ios-magic'
                               )
                             }
