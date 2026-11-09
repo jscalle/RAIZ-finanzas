@@ -690,7 +690,68 @@ async function startServer() {
   registerIosShortcutRoutes(app, {
     guard: firebaseProjectGuard,
     rateLimit,
-    deps: { getDb: getAdminFirestore },
+    deps: {
+      getDb: getAdminFirestore,
+      classifyWithAi: async ({ rawText, fallback, topics, recentExamples }) => {
+        const validCategories = topics.map((t) => `${t.name} (${t.type})`);
+        const examplesJson = JSON.stringify(
+          recentExamples.slice(0, 30).map((ex) => ({
+            desc: ex.description,
+            cat: ex.category,
+            method: ex.paymentMethod,
+            amount: ex.amount,
+          }))
+        );
+        const prompt = `Analiza este mensaje SMS/notificación bancaria real de Colombia y clasifícalo con precisión usando las categorías e historial real del usuario.
+
+<sms_notification>
+${rawText}
+</sms_notification>
+
+Categorías válidas del espacio del usuario: ${JSON.stringify(validCategories)}
+Historial reciente de movimientos del usuario (aprende cómo nombra y categoriza sus comercios):
+${examplesJson}
+
+Reglas obligatorias:
+1. MÉTODO DE PAGO ("paymentMethod"):
+   - Si el mensaje dice "T.Cred", "T. Cred", "T.Crédito", "Tarjeta de Crédito" o "TC" (ej: "con tu T.Cred *7170"), el método ES OBLIGATORIAMENTE "CREDITO".
+   - Si dice "T.Deb", "T.Débito", "Cta", "Ahorros", "Nequi", "DaviPlata" o transferencia, el método es "DEBITO".
+2. CATEGORÍA ("category"):
+   - Elige EXACTAMENTE el nombre de una categoría de la lista del usuario (sin el sufijo "(EXPENSE)" o "(INCOME)").
+   - Usa el historial del usuario y el contexto comercial en Colombia:
+     * Estaciones de servicio / gasolina / EDS / Inversiones Dayamo / Coesco / Terpel / Primax / Texaco / peajes / parqueaderos / talleres -> "Transporte"
+     * Restaurantes / cafés / postres / helados / mecato / salidas a comer -> "Comidas extra" (o "Restaurantes" / "Alimentación" según exista)
+     * Supermercados / mercado (Pricesmart, SuperMu, Éxito, D1, Carulla, Ara, Fruver) -> "Alimentación"
+     * Mascotas / veterinaria / Rafiki -> "Rafiki" (si existe)
+     * Deporte / tenis / cadie / Decathlon -> "Tenis y Deporte" (u Ocio)
+     * Google, Apple, iCloud, OpenAI, Netflix, Spotify -> "Suscripciones NUBE-IA" (o Suscripciones)
+     * EPM, Claro, Tigo, internet, servicios -> "Servicios Públicos"
+3. DESCRIPCIÓN ("description"):
+   - Si en el historial del usuario ya existe ese comercio con una descripción personalizada (ej: "Tanqueada carro INVERSIONES DAYAMO"), usa ese estilo claro y natural. Si no, usa una descripción limpia con el nombre del comercio (ej: "${fallback.description}").
+4. EXPLICACIÓN ("explanation"):
+   - Una frase breve en español indicando el comercio, si fue con Tarjeta de Crédito o Débito (y últimos dígitos si aparecen) y por qué se sugirió esa categoría.`;
+
+        const response = await getGeminiClient().models.generateContent({
+          model: ASSISTANT_MODEL,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                category: { type: Type.STRING },
+                paymentMethod: { type: Type.STRING },
+                description: { type: Type.STRING },
+                explanation: { type: Type.STRING },
+              },
+              required: ["category", "paymentMethod", "description", "explanation"],
+            },
+          },
+        });
+        const parsedJson = JSON.parse(response.text?.trim() || "{}");
+        return parsedJson;
+      },
+    },
   });
 
   // Telegram Bot API webhook. telegramWebhookGuard rejects (401) any update

@@ -9,10 +9,33 @@ import { parseBankNotificationFallback } from '../src/lib/notificationAutomation
 
 export const MAX_IOS_SHORTCUT_TEXT_LENGTH = 2000;
 
+export interface IosShortcutHistoricalExample {
+  description: string;
+  topicId: string;
+  category: string;
+  paymentMethod: string;
+  amount: number;
+}
+
+export interface IosShortcutAiClassification {
+  type?: 'INCOME' | 'EXPENSE';
+  amount?: number;
+  paymentMethod?: 'DEBITO' | 'CREDITO' | 'EFECTIVO' | 'DIGITAL';
+  category?: string;
+  description?: string;
+  explanation?: string;
+}
+
 export interface IosShortcutRouteDeps {
   getDb: () => Firestore;
   now?: () => Date;
   newId?: () => string;
+  classifyWithAi?: (input: {
+    rawText: string;
+    fallback: NonNullable<ReturnType<typeof parseBankNotificationFallback>>;
+    topics: Array<{ id: string; name: string; type: string }>;
+    recentExamples: IosShortcutHistoricalExample[];
+  }) => Promise<IosShortcutAiClassification | null>;
 }
 
 export interface IosShortcutRouteResult {
@@ -125,7 +148,126 @@ export function extractIosShortcutInput(req: {
   return { code, text };
 }
 
-function matchBestTopic(
+const MERCHANT_STOPWORDS = new Set([
+  'bancolombia',
+  'davivienda',
+  'nequi',
+  'daviplata',
+  'bbva',
+  'compra',
+  'compraste',
+  'pago',
+  'pagaste',
+  'movimiento',
+  'automatico',
+  'inversiones',
+  'comercializadora',
+  'distribuidora',
+  'colombia',
+  'medellin',
+  'bogota',
+  'centro',
+  'comercial',
+  'sas',
+  'ltda',
+  'del',
+  'las',
+  'los',
+  'por',
+  'con',
+  'para',
+]);
+
+function normalizeComparableText(str: string): string {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function loadHistoricalExamples(
+  db: Firestore,
+  spaceId: string,
+  topics: Array<{ id: string; name: string; type: string }>
+): Promise<IosShortcutHistoricalExample[]> {
+  try {
+    const topicMap = new Map(topics.map((t) => [t.id, t.name]));
+    const snap = await db
+      .collection('spaces')
+      .doc(spaceId)
+      .collection('expenses')
+      .limit(80)
+      .get();
+    if (snap.empty) return [];
+    const results: IosShortcutHistoricalExample[] = [];
+    for (const doc of snap.docs) {
+      const data = doc.data() as Record<string, unknown>;
+      const desc = typeof data.description === 'string' ? data.description.trim() : '';
+      const topicId = typeof data.topicId === 'string' ? data.topicId : '';
+      const category = topicMap.get(topicId) || '';
+      if (!desc || !topicId || !category) continue;
+      results.push({
+        description: desc,
+        topicId,
+        category,
+        paymentMethod:
+          typeof data.paymentMethod === 'string' ? data.paymentMethod : 'DEBITO',
+        amount: Number(data.amount) || 0,
+      });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+export function findHistoricalMerchantMatch(
+  merchantOrDesc: string,
+  examples: IosShortcutHistoricalExample[],
+  topics: Array<{ id: string; name: string; type: string }>
+): { id: string; name: string; learnedDescription?: string } | null {
+  const cleanMerchant = normalizeComparableText(
+    merchantOrDesc.replace(
+      /^(bancolombia|davivienda|nequi|daviplata|nu|bbva)\s*:\s*/i,
+      ''
+    )
+  );
+  if (!cleanMerchant || cleanMerchant === 'movimiento automatico') return null;
+
+  const merchantTokens = cleanMerchant
+    .split(' ')
+    .filter((tok) => tok.length >= 4 && !MERCHANT_STOPWORDS.has(tok));
+
+  for (const ex of examples) {
+    const normEx = normalizeComparableText(ex.description);
+    if (!normEx) continue;
+
+    const isDirectSubstring =
+      cleanMerchant.length >= 4 &&
+      (normEx.includes(cleanMerchant) || cleanMerchant.includes(normEx));
+
+    const hasDistinctiveTokenMatch =
+      merchantTokens.length > 0 &&
+      merchantTokens.some((tok) => tok.length >= 5 && normEx.split(' ').includes(tok));
+
+    if (isDirectSubstring || hasDistinctiveTokenMatch) {
+      const validTopic = topics.find((t) => t.id === ex.topicId);
+      if (validTopic) {
+        return {
+          id: validTopic.id,
+          name: validTopic.name,
+          learnedDescription: ex.description,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export function matchBestTopic(
   text: string,
   description: string,
   type: 'INCOME' | 'EXPENSE',
@@ -138,19 +280,9 @@ function matchBestTopic(
   if (exact) return { id: exact.id, name: exact.name };
 
   if (type === 'EXPENSE') {
+    // 1. Transporte / Gasolina / EDS / Movilidad / Parqueaderos / Peajes
     if (
-      /crepes|waffles|juan valdez|rappi|restaurante|almuerzo|cena|desayuno|caf[eé]|pizza|hamburguesa|comida|corral|starbucks|frisby|kfc|wok|mcdonald|mercado|supermercado|[eé]xito|d1|carulla|ara|ol[ií]mpica|vaquita|euro/i.test(
-        combined
-      )
-    ) {
-      const foodTopic = topics.find((t) =>
-        /comida|alimenta|restaurante|mercado/i.test(t.name)
-      );
-      if (foodTopic) return { id: foodTopic.id, name: foodTopic.name };
-    }
-
-    if (
-      /uber|didi|cabify|indriver|gasolina|terpel|primax|texaco|peaje|parqueadero|metro|transmilenio|flypass|gopass|transporte/i.test(
+      /uber|didi|cabify|indriver|gasolina|tanquead|tanqueo|retanqueo|\beds\b|estaci[oó]n de servicio|terpel|primax|texaco|biomax|zeuss|coesco|dayamo|peaje|parqueadero|celda|metro|transmilenio|flypass|gopass|transporte|moto|carro|taller|llantas|soat|tecnomec/i.test(
         combined
       )
     ) {
@@ -161,23 +293,100 @@ function matchBestTopic(
         return { id: transportTopic.id, name: transportTopic.name };
     }
 
+    // 2. Supermercados / Mercado de hogar -> Alimentación / Mercado
     if (
-      /epm|claro|tigo|movistar|etb|wom|netflix|spotify|icloud|apple|google|openai|claude|amazon|disney|max|servicio|celular|internet|energ[ií]a|agua/i.test(
+      /mercado|supermercado|pricesmart|supermu|[eé]xito|d1\b|carulla|\bara\b|ol[ií]mpica|vaquita|euro|makro|fruver|legumbres|verduras|carnicer/i.test(
+        combined
+      )
+    ) {
+      const groceryTopic =
+        topics.find((t) => /alimenta|mercado/i.test(t.name)) ||
+        topics.find((t) => /comida/i.test(t.name));
+      if (groceryTopic) return { id: groceryTopic.id, name: groceryTopic.name };
+    }
+
+    // 3. Restaurantes / Cafés / Salidas / Comidas fuera -> Comidas extra / Restaurantes (fallback Alimentación)
+    if (
+      /crepes|waffles|juan valdez|rappi|restaurante|almuerzo|cena|desayuno|caf[eé]|pizza|hamburguesa|comida|corral|starbucks|frisby|kfc|wok|mcdonald|mcflurry|burrisimos|fresenata|todofresa|mekato|helado|postre|panader[ií]a|reposter[ií]a/i.test(
+        combined
+      )
+    ) {
+      const diningOutTopic =
+        topics.find((t) => /comidas?\s*extra|restaurante|salida/i.test(t.name)) ||
+        topics.find((t) => /comida|alimenta|mercado/i.test(t.name));
+      if (diningOutTopic)
+        return { id: diningOutTopic.id, name: diningOutTopic.name };
+    }
+
+    // 4. Mascotas (Rafiki / Perro / Veterinaria)
+    if (
+      /rafiki|fiki|veterinari|agaval|kanu|pet|mascota|nexgard|concentrado/i.test(
+        combined
+      )
+    ) {
+      const petTopic = topics.find((t) =>
+        /rafiki|mascota|perro|gato|pet/i.test(t.name)
+      );
+      if (petTopic) return { id: petTopic.id, name: petTopic.name };
+    }
+
+    // 5. Deporte y Ocio (Tenis, Cadie, Decathlon, Gym, Cine)
+    if (
+      /tenis|cadie|cancha|deporte|decathlon|dekathlon|gym|smartfit|bodytech|cine|procinal|cinecolombia|boleta|entretenimiento/i.test(
+        combined
+      )
+    ) {
+      const sportTopic = topics.find((t) =>
+        /tenis|deporte|ocio|entretenimiento/i.test(t.name)
+      );
+      if (sportTopic) return { id: sportTopic.id, name: sportTopic.name };
+    }
+
+    // 6. Suscripciones digitales / Cloud / IA
+    if (
+      /netflix|spotify|icloud|apple|google|gcp|openai|chatgpt|claude|anthropic|cursor|github|aws|azure|amazon|disney|max|youtube|suscripci/i.test(
+        combined
+      )
+    ) {
+      const subTopic =
+        topics.find((t) => /suscripci|nube|ia\b|digital/i.test(t.name)) ||
+        topics.find((t) => /servicio/i.test(t.name));
+      if (subTopic) return { id: subTopic.id, name: subTopic.name };
+    }
+
+    // 7. Servicios Públicos y Telecomunicaciones
+    if (
+      /epm|claro|tigo|movistar|etb|wom|servicio|celular|internet|energ[ií]a|agua|acueducto|gas natural/i.test(
         combined
       )
     ) {
       const serviceTopic = topics.find((t) =>
-        /servicio|suscripci|hogar|fijo/i.test(t.name)
+        /servicio|hogar|fijo/i.test(t.name)
       );
       if (serviceTopic) return { id: serviceTopic.id, name: serviceTopic.name };
     }
 
+    // 8. Pagos de Tarjetas de Crédito / Deudas
     if (
-      /farmatodo|cruz verde|pasteur|droguer[ií]a|salud|eps|sura|medicina|consulta/i.test(
+      /(?:abono|pago)\s+(?:a\s+|de\s+)?(?:tu\s+)?(?:t\.?\s*cr[eé]d|tarjeta|tc\b|nu\b|nubank|cr[eé]dito)/i.test(
         combined
       )
     ) {
-      const healthTopic = topics.find((t) => /salud|m[eé]dic/i.test(t.name));
+      const debtTopic = topics.find((t) =>
+        /tarjeta|cr[eé]dito|deuda/i.test(t.name)
+      );
+      if (debtTopic) return { id: debtTopic.id, name: debtTopic.name };
+    }
+
+    // 9. Salud / Droguerías / Imprevistos / Compras varias (Miniso, Dollarcity)
+    if (
+      /farmatodo|cruz verde|pasteur|droguer[ií]a|salud|eps|sura|medicina|consulta|copago|miniso|dollarcity/i.test(
+        combined
+      )
+    ) {
+      const healthTopic = topics.find((t) =>
+        /salud|m[eé]dic|imprevisto/i.test(t.name)
+      );
       if (healthTopic) return { id: healthTopic.id, name: healthTopic.name };
     }
   }
@@ -264,16 +473,81 @@ export async function handleIosShortcutNotification(
   }
 
   const topics = await getSpaceTopics(deps.getDb, space.id);
-  const matchedTopic = matchBestTopic(
-    safeText,
-    parsed.description,
-    parsed.type,
+  const recentExamples = await loadHistoricalExamples(db, space.id, topics);
+
+  // Stage 1: Historical Merchant Memory (exact merchant seen previously in this space)
+  const historicalMatch = findHistoricalMerchantMatch(
+    parsed.merchant || parsed.description,
+    recentExamples,
     topics
   );
 
+  // Stage 2: Deterministic Colombian merchant rules
+  let matchedTopic = historicalMatch
+    ? { id: historicalMatch.id, name: historicalMatch.name }
+    : matchBestTopic(safeText, parsed.description, parsed.type, topics);
+
+  let finalDescription =
+    historicalMatch?.learnedDescription || parsed.description;
+  let finalPaymentMethod: string = parsed.paymentMethod;
+  let finalExplanation =
+    parsed.paymentMethod === 'CREDITO'
+      ? `Compra con Tarjeta de Crédito${parsed.cardLast4 ? ` (*${parsed.cardLast4})` : ''} detectada desde tu Atajo de iOS.`
+      : `Movimiento con Débito/Cuenta${parsed.cardLast4 ? ` (*${parsed.cardLast4})` : ''} detectado desde tu Atajo de iOS.`;
+
+  // Stage 3: Gemini AI enrichment (when available, bounded by a 5.5s timeout so iOS never times out)
+  if (deps.classifyWithAi) {
+    try {
+      const aiResult = await Promise.race([
+        deps.classifyWithAi({
+          rawText: safeText,
+          fallback: parsed,
+          topics,
+          recentExamples: recentExamples.slice(0, 35),
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5500)),
+      ]);
+
+      if (aiResult) {
+        // Only override category with AI if we didn't already have an exact historical match for this merchant
+        if (!historicalMatch && aiResult.category) {
+          const aiTopic = topics.find(
+            (t) => t.name.toLowerCase() === aiResult.category!.toLowerCase().trim()
+          );
+          if (aiTopic) {
+            matchedTopic = { id: aiTopic.id, name: aiTopic.name };
+          }
+        }
+        if (
+          !historicalMatch?.learnedDescription &&
+          aiResult.description &&
+          aiResult.description.trim().length >= 3
+        ) {
+          finalDescription = aiResult.description.trim();
+        }
+        // Preserve CREDITO if regex already proved "T.Cred" / "TC"; otherwise allow AI to refine method
+        if (parsed.paymentMethod === 'CREDITO') {
+          finalPaymentMethod = 'CREDITO';
+        } else if (
+          aiResult.paymentMethod === 'CREDITO' ||
+          aiResult.paymentMethod === 'DEBITO' ||
+          aiResult.paymentMethod === 'EFECTIVO' ||
+          aiResult.paymentMethod === 'DIGITAL'
+        ) {
+          finalPaymentMethod = aiResult.paymentMethod;
+        }
+        if (aiResult.explanation && aiResult.explanation.trim()) {
+          finalExplanation = aiResult.explanation.trim();
+        }
+      }
+    } catch (aiErr) {
+      console.warn('[ios-shortcut] AI classification skipped, using local rules:', aiErr);
+    }
+  }
+
   const now = (deps.now ?? (() => new Date()))();
   const rand = (deps.newId ?? defaultRandomId)();
-  const todayISO = getColombiaDateISO();
+  const todayISO = parsed.date || getColombiaDateISO();
   const draftId = `ios_${now.getTime()}_${rand}`;
 
   const draft = {
@@ -282,14 +556,13 @@ export async function handleIosShortcutNotification(
     type: parsed.type,
     amount: parsed.amount,
     currency: 'COP',
-    description: parsed.description,
+    description: finalDescription,
     category: matchedTopic.name,
     topicId: matchedTopic.id,
-    paymentMethod: parsed.paymentMethod,
+    paymentMethod: finalPaymentMethod,
     date: todayISO,
     rawText: safeText,
-    explanation:
-      'Detectado automáticamente desde tu Atajo de iOS (pendiente por confirmar).',
+    explanation: finalExplanation,
     status: 'PENDING' as const,
     source: 'SMS_WEBHOOK' as const,
     createdAt: now.toISOString(),

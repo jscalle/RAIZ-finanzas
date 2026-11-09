@@ -121,6 +121,7 @@ export interface PendingTransaction {
   currency: string;
   description: string;
   category: string;
+  topicId?: string;
   date: string;
   explanation: string;
   status: 'PENDING' | 'APPROVED' | 'DISCARDED';

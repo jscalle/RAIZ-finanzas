@@ -203,4 +203,57 @@ describe('iOS Shortcut background webhook (/api/automation/ios-shortcut)', () =>
       'spaces/espacio_principal/pending_transactions/ios_1794168000000_sec1'
     );
   });
+
+  it('detects T.Cred *7170 as CREDITO, extracts SMS date, and learns merchant category/description from history', async () => {
+    const { db, writes } = createFakeDb({
+      'spaces/espacio_u_1': {
+        name: 'Personal',
+        code: 'ESP-3GF5A9',
+        ownerUid: 'u_1',
+        members: ['u_1'],
+      },
+      'spaces/espacio_u_1/topics/t_salud': {
+        id: 't_salud',
+        name: 'Salud e Imprevistos',
+        type: 'EXPENSE',
+      },
+      'spaces/espacio_u_1/topics/t_transporte': {
+        id: 't_transporte',
+        name: 'Transporte',
+        type: 'EXPENSE',
+      },
+      'spaces/espacio_u_1/expenses/exp_prev_1': {
+        id: 'exp_prev_1',
+        description: 'Tanqueada carro INVERSIONES DAYAMO',
+        amount: 98000,
+        topicId: 't_transporte',
+        paymentMethod: 'CREDITO',
+      },
+    });
+
+    const res = await handleIosShortcutNotification(
+      {
+        getDb: () => db,
+        now: () => new Date('2026-11-09T01:11:00.000Z'),
+        newId: () => 'cred77',
+      },
+      {
+        code: 'ESP-3GF5A9',
+        text: 'Bancolombia: Compraste COP102.073,00 en INVERSIONES DAYAMO con tu T.Cred *7170, el 08/11/2026 a las 20:11. Si tienes dudas, llamanos al 018000931987.',
+      }
+    );
+
+    expect(res.httpStatus).toBe(200);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].data).toMatchObject({
+      type: 'EXPENSE',
+      amount: 102073,
+      description: 'Tanqueada carro INVERSIONES DAYAMO',
+      category: 'Transporte',
+      topicId: 't_transporte',
+      paymentMethod: 'CREDITO',
+      date: '2026-11-08',
+      status: 'PENDING',
+    });
+  });
 });

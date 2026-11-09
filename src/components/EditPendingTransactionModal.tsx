@@ -61,9 +61,14 @@ export default function EditPendingTransactionModal({
         (t) => t.type === (isIncome ? 'INCOME' : 'EXPENSE') || t.type === 'BOTH'
       );
 
-      const matchedTopic = topics.find(
-        (t) => t.name.toLowerCase() === pendingTx.category?.toLowerCase()
-      );
+      const matchedById = pendingTx.topicId
+        ? topics.find((t) => t.id === pendingTx.topicId)
+        : undefined;
+      const matchedTopic =
+        matchedById ||
+        topics.find(
+          (t) => t.name.toLowerCase() === pendingTx.category?.toLowerCase()
+        );
 
       const defaultTopic = matchedTopic
         ? matchedTopic.id
@@ -71,9 +76,20 @@ export default function EditPendingTransactionModal({
           ? filteredTopics[0].id
           : '';
 
+      const rawMethod = (pendingTx.paymentMethod || '').toUpperCase().trim();
+      const defaultMethod = isIncome
+        ? rawMethod === 'EFECTIVO'
+          ? 'EFECTIVO'
+          : 'DIGITAL'
+        : rawMethod === 'CREDITO' ||
+            rawMethod === 'DEBITO' ||
+            rawMethod === 'EFECTIVO'
+          ? rawMethod
+          : 'DEBITO';
+
       setTopicId(defaultTopic);
       setDate(normalizeDateToISO(pendingTx.date || ''));
-      setMethod('DIGITAL');
+      setMethod(defaultMethod);
       setError('');
     }
   }
@@ -153,6 +169,7 @@ export default function EditPendingTransactionModal({
                 type="button"
                 onClick={() => {
                   setType('EXPENSE');
+                  if (method === 'DIGITAL') setMethod('DEBITO');
                   const t = topics.filter(
                     (x) => x.type === 'EXPENSE' || x.type === 'BOTH'
                   );
@@ -171,6 +188,8 @@ export default function EditPendingTransactionModal({
                 type="button"
                 onClick={() => {
                   setType('INCOME');
+                  if (method === 'DEBITO' || method === 'CREDITO')
+                    setMethod('DIGITAL');
                   const t = topics.filter(
                     (x) => x.type === 'INCOME' || x.type === 'BOTH'
                   );
@@ -258,10 +277,10 @@ export default function EditPendingTransactionModal({
                 onChange={(e) => setMethod(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-xl bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
               >
-                <option value="DIGITAL">Digital</option>
                 <option value="DEBITO">Débito</option>
                 <option value="CREDITO">Crédito</option>
                 <option value="EFECTIVO">Efectivo</option>
+                <option value="DIGITAL">Digital</option>
               </select>
             </div>
           </div>

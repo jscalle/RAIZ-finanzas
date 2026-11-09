@@ -301,15 +301,38 @@ export function parseBankNotificationFallback(rawText: string): {
   amount: number;
   paymentMethod: 'DEBITO' | 'CREDITO';
   description: string;
+  merchant?: string;
+  date?: string;
+  cardLast4?: string;
 } | null {
   const text = rawText.trim();
   if (!text) return null;
 
-  // Strip card ending patterns like *4321 or "terminada en 4321" so they are never mistaken for amounts
-  const textWithoutCardDigits = text.replace(
-    /(?:\*+|terminada\s+en\s+|cta\.?\s*\*?|t\.?\s*(?:d[eé]bito|cr[eé]dito)\s*\*?)\s*\d{3,4}\b/gi,
-    ' '
+  const cardMatch = text.match(
+    /(?:\*+|terminada\s+en\s+|t\.?\s*(?:d[eé]b(?:ito)?|cr[eé]d(?:ito)?)\s*\*?)\s*(\d{3,4})\b/i
   );
+  const cardLast4 = cardMatch ? cardMatch[1] : undefined;
+
+  // Extract date if present in SMS (e.g., "el 08/11/2026" or "2026-11-08")
+  let extractedDate: string | undefined;
+  const dmyMatch = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](20\d{2})\b/);
+  const ymdMatch = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
+    extractedDate = `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  } else if (ymdMatch) {
+    extractedDate = ymdMatch[0];
+  }
+
+  // Strip card ending patterns (like *7170 or "terminada en 4321") and dates/times so they are never mistaken for amounts
+  const textWithoutCardDigits = text
+    .replace(
+      /(?:\*+|terminada\s+en\s+|cta\.?\s*\*?|t\.?\s*(?:d[eé]b(?:ito)?|cr[eé]d(?:ito)?)\s*\*?)\s*\d{3,4}\b/gi,
+      ' '
+    )
+    .replace(/\b\d{1,2}[/-]\d{1,2}[/-]20\d{2}\b/g, ' ')
+    .replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ');
 
   // Match Colombian peso amounts like $45.000, $1.250.000,00, COP 50000, "por 48.500", or bare formatted numbers
   const amountMatch =
@@ -332,29 +355,43 @@ export function parseBankNotificationFallback(rawText: string): {
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
   const isIncome =
-    /(recibiste|abono|consignaci[oó]n|n[oó]mina|te enviaron|transferencia recibida|dep[oó]sito)/i.test(
+    /(recibiste|abono\s+a\s+tu\s+cuenta|consignaci[oó]n|n[oó]mina|te enviaron|transferencia recibida|dep[oó]sito)/i.test(
       text
     );
-  const isCredit = /(t\.?\s*cr[eé]dito|tarjeta de cr[eé]dito|tc\b|cr[eé]dito)/i.test(
-    text
-  );
+
+  const isCreditCardBillPayment =
+    /(?:abono|pago)\s+(?:a\s+|de\s+)?(?:tu\s+)?(?:t\.?\s*cr[eé]d(?:ito)?|tarjeta\s+(?:de\s+)?cr[eé]d(?:ito)?|\btc\b)/i.test(
+      text
+    );
+
+  // Match Bancolombia "T.Cred", "T. Cred", "T.Crédito", "Tarjeta de Crédito", "TC", "Crédito"
+  const isCredit =
+    !isCreditCardBillPayment &&
+    /(?:\bt\.?\s*cr[eé]d(?:ito)?\b|tarjeta\s+(?:de\s+)?cr[eé]d(?:ito)?|\btc\b|\bcr[eé]dito\b)/i.test(
+      text
+    );
 
   // Try to extract merchant after "en " or "a "
   const merchantMatch = text.match(
-    /\b(?:en|comercio|a)\s+([A-Z0-9ÁÉÍÓÚÑ][A-Za-z0-9ÁÉÍÓÚÑáéíóúñ\s.*-]{2,28}?)(?:\s+(?:el|por|con|desde|hora|\d{2}[/:])|[.,;]|$)/i
+    /\b(?:en|comercio|a)\s+([A-Z0-9ÁÉÍÓÚÑ][A-Za-z0-9ÁÉÍÓÚÑáéíóúñ\s.*&-]{2,36}?)(?:\s+(?:el|por|con|desde|hora|\d{2}[/:])|[.,;]|$)/i
   );
   const bankMatch = text.match(
     /\b(Bancolombia|Davivienda|Nequi|DaviPlata|Nu|Lulo\s*Bank|BBVA)\b/i
   );
 
   const bankPrefix = bankMatch ? `${bankMatch[1]}: ` : '';
-  const merchant = merchantMatch ? merchantMatch[1].trim() : 'Movimiento automático';
+  const merchant = merchantMatch
+    ? merchantMatch[1].replace(/\s+/g, ' ').trim()
+    : 'Movimiento automático';
 
   return {
     type: isIncome ? 'INCOME' : 'EXPENSE',
     amount,
     paymentMethod: isCredit ? 'CREDITO' : 'DEBITO',
     description: `${bankPrefix}${merchant}`,
+    merchant,
+    date: extractedDate,
+    cardLast4,
   };
 }
 

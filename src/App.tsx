@@ -1864,17 +1864,25 @@ export default function App() {
     }
   ) => {
     if (editedData.type === 'INCOME') {
+      const incMethod: NonNullable<Income['method']> =
+        editedData.method === 'EFECTIVO' ? 'EFECTIVO' : 'DIGITAL';
       handleAddIncome(
         editedData.description,
         editedData.amount,
         editedData.topicId,
         editedData.date,
         true,
-        editedData.method as NonNullable<Income['method']>,
+        incMethod,
         'SMS_PUSH',
         'VERIFIED'
       );
     } else {
+      const expMethod: NonNullable<Expense['paymentMethod']> =
+        editedData.method === 'CREDITO' ||
+        editedData.method === 'EFECTIVO' ||
+        editedData.method === 'DEBITO'
+          ? editedData.method
+          : 'DEBITO';
       handleAddExpense(
         editedData.description,
         editedData.amount,
@@ -1882,11 +1890,15 @@ export default function App() {
         editedData.date,
         'INGRESOS',
         true,
-        editedData.method as NonNullable<Expense['paymentMethod']>,
+        expMethod,
         'SMS_PUSH',
         'VERIFIED'
       );
     }
+
+    setPendingTransactions((prev) =>
+      prev.filter((item) => item.id !== pendingTx.id)
+    );
 
     if (syncEnabled && currentSpaceId) {
       if (

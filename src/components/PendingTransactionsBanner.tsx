@@ -58,9 +58,21 @@ export const PendingTransactionsBanner: React.FC<
           <p className="text-amber-900 font-medium">
             En: {currentTx.description}
           </p>
-          <div className="flex gap-4 text-amber-700/80 text-xs mt-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-amber-700/80 text-xs mt-1">
             <span>Fecha: {currentTx.date}</span>
             <span>Categoría sugerida: {currentTx.category}</span>
+            <span>
+              Método:{' '}
+              <strong className="text-amber-900">
+                {currentTx.paymentMethod === 'CREDITO'
+                  ? '💳 Crédito'
+                  : currentTx.paymentMethod === 'EFECTIVO'
+                    ? '💵 Efectivo'
+                    : currentTx.paymentMethod === 'DIGITAL'
+                      ? '📱 Digital'
+                      : '💳 Débito'}
+              </strong>
+            </span>
           </div>
           {currentTx.explanation && (
             <p className="text-amber-700/80 mt-1 italic">
